@@ -239,7 +239,8 @@ function loop() {
   // 有些版本的程式庫不回傳「可見度」：這時一律當作看得到，否則骨架畫不出來、也無法分析
   if (lm && !lm.some(p => p.visibility > 0)) lm = lm.map(p => ({ x: p.x, y: p.y, z: p.z, visibility: 1 }));
   // 沒看到人（或只是背景被誤判成人）：這一格不畫、不記錄、不計次
-  if (!lm || !Core.valid(lm, W, H)) {
+  // 計次開始後放寬可見度門檻：手舉到最高時手臂常會擋住肩膀或手肘，太嚴會整段漏掉（是否換了人／離開位置另外由 S.home 把關）
+  if (!lm || !Core.valid(lm, W, H, S.recording ? 0.35 : 0.6)) {
     S.steady = null;
     // 計次中人不見了：超過 6 秒就自動結束（次數只算到人不見之前）
     if (S.recording && S.mode === 'live') { if (!S.goneT) S.goneT = now / 1000; else if (now / 1000 - S.goneT > 6) return finish(S.goneT); }
@@ -275,6 +276,8 @@ function loop() {
   warn('');
   if (a.ok) setPhase(...PH[a.phase]);
   S.track.push({ t, a: pack(lm) });
+  // 即時畫面也畫出這一下的手部軌跡與（飛鳥）目標前臂，和回放相同
+  drawTrail(ctx, { track: S.track, reps: a.reps }, t, S.track.length - 1, S.track[S.track.length - 1], W, H);
   // 舉到頂端（接下來要下放）：這時才提醒「下放」要注意什麼，內容依上一下的結果
   if (a.count > S.said) {
     S.said = a.count; S.lastRepT = t; $('count').textContent = a.count;
@@ -416,7 +419,7 @@ function replayLoop() {
   while (lo < hi) { const m = (lo + hi) >> 1; if (tr[m].t < t) lo = m + 1; else hi = m; }
   const f = lo > 0 && t - tr[lo - 1].t < tr[lo].t - t ? tr[lo - 1] : tr[lo];
   if (f && Math.abs(f.t - t) < 0.15) draw(g, unpack(f.a), c.width, c.height);
-  drawTrail(g, t, lo, f && Math.abs(f.t - t) < 0.15 ? f : null, c.width, c.height);
+  drawTrail(g, RP, t, lo, f && Math.abs(f.t - t) < 0.15 ? f : null, c.width, c.height);
   let lab = '';
   RP.reps.forEach((r, i) => {
     if (t < r.tTop - (r.up || 0)) return;
@@ -428,15 +431,16 @@ function replayLoop() {
 // 回放上的實際軌跡：目前這一下，兩手手腕走過的路線
 //  藍細線 = 上舉；粗線 = 下放（紅太快／黃稍快／綠好）；白點每 0.1 秒一顆，點越稀 = 動得越快
 //  綠虛線 = 手肘角度不對時，「手肘約 150°」的前臂大概該在哪（從 2D 畫面估的，僅供參考）
-function drawTrail(g, t, hiIdx, cur, W, H) {
-  const tr = RP.track, lw = Math.max(4, W / 180);
-  let ri = -1; RP.reps.forEach((r, i) => { if (t >= r.tTop - (r.up || 0)) ri = i; });
+function drawTrail(g, src, t, hiIdx, cur, W, H) {
+  const tr = src.track, lw = Math.max(4, W / 180);
+  let ri = -1, j0 = 0; src.reps.forEach((r, i) => { if (t >= r.tTop - (r.up || 0)) ri = i; });
   if (ri >= 0) {
-    const r = RP.reps[ri], s = r.tTop - (r.up || 0), tDown = r.tTop + (r.top || 0), e = r.down != null ? tDown + r.down : Infinity;
+    const r = src.reps[ri], s = r.tTop - (r.up || 0), tDown = r.tTop + (r.top || 0), e = r.down != null ? tDown + r.down : Infinity;
     const col = { fast: '#ff4646', mid: '#ffd700', good: '#8cff28' }[grade(r.down)] || '#ffffff';
+    j0 = Math.min(hiIdx, tr.length - 1); while (j0 > 0 && tr[j0 - 1].t >= s) j0--; // 這一下從哪一格開始（不必每次從頭掃）
     for (const w of [15, 16]) {
       let prev = null, lastDot = -1; const dots = [];
-      for (let j = 0; j <= Math.min(hiIdx, tr.length - 1); j++) {
+      for (let j = j0; j <= Math.min(hiIdx, tr.length - 1); j++) {
         const fr = tr[j]; if (fr.t < s) continue; if (fr.t > t || fr.t > e) break;
         if (fr.a[w * 3 + 2] < 0.5) { prev = null; continue; } // 看不清楚手腕的那幾格不連線
         const p = { x: fr.a[w * 3] * W, y: fr.a[w * 3 + 1] * H, t: fr.t };
@@ -465,7 +469,7 @@ function drawTrail(g, t, hiIdx, cur, W, H) {
     if (ang > 165) {
       // 前臂應該往「舉起的方向」偏：用這一下手腕在頂端時的位置當方向；沒有就假設往身體中線
       let ref = O;
-      if (ri >= 0) { const tt = RP.reps[ri].tTop; let best = 0.3; for (const fr of tr) { const d = Math.abs(fr.t - tt); if (d < best && fr.a[wi * 3 + 2] >= 0.5) { best = d; ref = { x: fr.a[wi * 3] * W, y: fr.a[wi * 3 + 1] * H }; } if (fr.t > tt + 0.3) break; } }
+      if (ri >= 0) { const tt = src.reps[ri].tTop; let best = 0.3; for (let j = j0; j < tr.length; j++) { const fr = tr[j], d = Math.abs(fr.t - tt); if (d < best && fr.a[wi * 3 + 2] >= 0.5) { best = d; ref = { x: fr.a[wi * 3] * W, y: fr.a[wi * 3 + 1] * H }; } if (fr.t > tt + 0.3) break; } }
       const A = cand(1), B = cand(-1); T = Math.hypot(A.x - ref.x, A.y - ref.y) < Math.hypot(B.x - ref.x, B.y - ref.y) ? A : B;
     }
     else T = cand(cross >= 0 ? 1 : -1);

@@ -1,6 +1,8 @@
 // ===== 動作分析核心（純運算，無 DOM）=====
 const Core = (() => {
-  const TOP = 0.85, BOT = 0.25, BOT_OUT = 0.4, MIN_RANGE = 0.3; // BOT_OUT：離開底部要超過這個值，避免底部抖動誤判 // 以軀幹長度為單位
+  // 以「這一下自己的最低點～最高點」為 0～1：TOP 以上算頂端、BOT 以下算回到底部、離開底部要超過 BOT_OUT
+  // MIN_RANGE：一下至少要有多大的幅度（單位：軀幹長度），太小的當成晃動
+  const TOP = 0.85, BOT = 0.25, BOT_OUT = 0.4, MIN_RANGE = 0.18;
   const SIDES = { L: [11, 13, 23], R: [12, 14, 24] }, WRIST = { L: 15, R: 16 };
   const med = a => { const b = [...a].sort((x, y) => x - y); return b[b.length >> 1]; };
 
@@ -30,7 +32,7 @@ const Core = (() => {
     const mid = (i, j, c) => (wl[i][c] + wl[j][c]) / 2;
     const b = ['x', 'y', 'z'].map(c => mid(23, 24, c) - mid(11, 12, c));
     for (const k in SIDES) {
-      const [s, e, h] = SIDES[k], v = i => lm[i].visibility ?? 0;
+      const [s, e] = SIDES[k], v = i => lm[i].visibility ?? 0;
       if (Math.min(v(s), v(e)) < 0.5 || Math.min(v(23), v(24)) < 0.3) continue;
       const a = [wl[e].x - wl[s].x, wl[e].y - wl[s].y, wl[e].z - wl[s].z];
       const cos = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (Math.hypot(...a) * Math.hypot(...b) || 1);
@@ -44,67 +46,110 @@ const Core = (() => {
     const d = (a, b) => Math.hypot((lm[a].x - lm[b].x) * W, (lm[a].y - lm[b].y) * H);
     return Math.max(d(11, 12), d(11, 23), d(12, 24));
   }
-  // 這一格是否真的看到人：至少一側的肩、肘看得清楚，而且人不能小到不合理（背景雜物誤判）
-  function valid(lm, W, H) {
+  // 這一格是否真的看到人：至少一側的肩、肘看得清楚（可見度 ≥ minVis），而且人不能小到不合理（背景雜物誤判）
+  function valid(lm, W, H, minVis = 0.6) {
     const v = i => lm[i].visibility ?? 0;
-    if (Math.max(Math.min(v(11), v(13)), Math.min(v(12), v(14))) < 0.6) return false;
+    if (Math.max(Math.min(v(11), v(13)), Math.min(v(12), v(14))) < minVis) return false;
     return size(lm, W, H) >= 0.08 * Math.min(W, H);
   }
   // 兩肩中點（像素）與人的大小，用來判斷是否已就位不動
   function center(lm, W, H) { return { x: (lm[11].x + lm[12].x) / 2 * W, y: (lm[11].y + lm[12].y) / 2 * H, size: size(lm, W, H) }; }
 
-  // buf: [{t(秒), L:{v,vis,torso}, R:{...}}]
+  // buf: [{t(秒), L:{v,vis,torso,ang,abd}, R:{...}}]
+  // 做法：先找出訊號的轉折點（低點、高點交替），每個「低→高→低」是一下。
+  // 每一下用自己的低點、高點當基準，所以某一下特別大（或起身、調整姿勢）不會讓其他下被漏掉。
   function analyze(buf) {
     const out = { ok: false, count: 0, reps: [], phase: 'bot', s: 0, side: 'L', vis: 0 };
-    if (buf.length < 5) return out;
+    const n = buf.length;
+    if (n < 5) return out;
     const sum = k => buf.reduce((a, f) => a + f[k].vis, 0);
     const side = sum('L') >= sum('R') ? 'L' : 'R';
-    out.side = side; out.vis = buf[buf.length - 1][side].vis;
+    out.side = side; out.vis = buf[n - 1][side].vis;
     const torsos = buf.map(f => f[side].torso).filter(x => x);
     if (!torsos.length) return out;
-    const torso = med(torsos);
-    const raw = buf.map(f => f[side].v / torso);
-    const n = raw.length, sig = new Array(n);
+    const torso = med(torsos), raw = buf.map(f => f[side].v / torso), sig = new Array(n), T = i => buf[i].t;
     for (let i = 0; i < n; i++) sig[i] = med(raw.slice(Math.max(0, i - 2), Math.min(n, i + 3)));
-    let lo = Infinity, hi = -Infinity;
-    for (const x of sig) { if (x < lo) lo = x; if (x > hi) hi = x; }
-    const R = hi - lo;
-    out.s = R > 1e-6 ? (sig[n - 1] - lo) / R : 0;
-    if (R < MIN_RANGE) return out;
-    out.ok = true;
-    let st = (sig[0] - lo) / R >= TOP ? 'top' : 'bot', cur = null, upStart = null, botStart = null, topEnd = null, downIdx = 0;
-    const reps = [];
-    if (st === 'top') { cur = { up: null, tTop: buf[0].t, top: null, down: null, bottom: null, elbow: null }; reps.push(cur); }
+    const sorted = [...sig].sort((a, b) => a - b), q = p => sorted[Math.min(n - 1, Math.floor(p * n))], span = sorted[n - 1] - sorted[0];
+    out.s = span > 1e-6 ? (sig[n - 1] - sorted[0]) / span : 0;
+    out.ok = span >= MIN_RANGE;
+
+    // 1) 轉折點：反向移動超過 DELTA 才算換方向（DELTA 跟著動作幅度調整，但不被單一特大動作綁架）
+    const DELTA = Math.max(0.08, 0.3 * (q(0.9) - q(0.1)), 0.12 * span);
+    const ext = []; let dir = 0, loI = 0, hiI = 0; // dir：1 = 正在上升（找高點）、-1 = 正在下降（找低點）
     for (let i = 1; i < n; i++) {
-      const s = (sig[i] - lo) / R, t = buf[i].t;
-      // 中間超過 1 秒沒看到人：不把前後接起來當成一下，從底部重新開始
-      if (t - buf[i - 1].t > 1 && st !== 'bot') { st = 'bot'; botStart = null; if (cur) delete cur._pause; }
-      if (st === 'bot') {
-        if (s > BOT_OUT) { st = 'up'; upStart = t; if (cur && botStart != null && cur.bottom == null) cur._pause = t - botStart; }
-      } else if (st === 'up') {
-        if (s >= TOP) {
-          st = 'top';
-          if (cur && cur._pause != null) cur.bottom = cur._pause;
-          cur = { up: t - upStart, tTop: t, top: null, down: null, bottom: null, elbow: null }; reps.push(cur);
-        } else if (s <= BOT) { st = 'bot'; if (cur) delete cur._pause; }
-      } else if (st === 'top') {
-        if (s < TOP) { st = 'down'; topEnd = t; downIdx = i; cur.top = t - cur.tTop; }
-      } else if (st === 'down') {
-        if (s <= BOT) {
-          st = 'bot'; botStart = t; cur.down = t - topEnd;
-          // 手肘角度：取下放後半段（手臂接近地面時）兩手的中位數
-          const a = [];
-          for (let j = Math.floor((downIdx + i) / 2); j <= i; j++) for (const k of ['L', 'R']) if (buf[j][k].ang != null) a.push(buf[j][k].ang);
-          cur.elbow = a.length ? med(a) : null;
-          // 手肘張開角度：同一段時間（上臂接近地面時）兩手的中位數
-          const fa = [];
-          for (let j = Math.floor((downIdx + i) / 2); j <= i; j++) for (const k of ['L', 'R']) if (buf[j][k].abd != null) fa.push(buf[j][k].abd);
-          cur.flare = fa.length ? med(fa) : null;
-        }
-        else if (s >= TOP) { st = 'top'; cur.top = null; }
-      }
+      if (dir >= 0 && sig[i] > sig[hiI]) hiI = i;
+      if (dir <= 0 && sig[i] < sig[loI]) loI = i;
+      if (dir <= 0 && sig[i] - sig[loI] >= DELTA) { ext.push({ i: loI, hi: false }); dir = 1; hiI = i; }
+      else if (dir >= 0 && sig[hiI] - sig[i] >= DELTA) { ext.push({ i: hiI, hi: true }); dir = -1; loI = i; }
     }
-    out.phase = st; out.reps = reps; out.count = reps.length;
+
+    // 2) 每個高點是一下的候選：prev = 前一個低點、next = 後一個低點（還在下降中的話先用目前最低點）
+    const cands = [];
+    ext.forEach((e, k) => {
+      if (!e.hi) return;
+      const prev = k > 0 ? ext[k - 1].i : null, nx = k + 1 < ext.length ? ext[k + 1].i : (dir === -1 ? loI : null);
+      cands.push({ p: e.i, prev, next: nx, tail: k + 1 >= ext.length, amp: prev != null ? sig[e.i] - sig[prev] : nx != null ? sig[e.i] - sig[nx] : 0 });
+    });
+    const amps = cands.map(c => c.amp), A = amps.length ? med(amps) : null; // 一般的一下有多大
+    const need = Math.max(MIN_RANGE, A ? 0.5 * A : 0);
+    const tooBig = amp => amps.length >= 3 && amp > 2.5 * A; // 比一般的一下大很多：是起身或調整姿勢，不是一下
+    let list = cands.filter(c => c.amp >= need && !tooBig(c.amp));
+    // 還在上升中的這一下：升得夠高就先算（即時顯示與語音需要在「到頂」時就知道）
+    if (dir === 1 && ext.length) {
+      const prev = ext[ext.length - 1].i, rise = sig[hiI] - sig[prev];
+      if (rise >= Math.max(MIN_RANGE, A ? 0.85 * A : 0) && !tooBig(rise)) list.push({ p: hiI, prev, next: null, tail: true, amp: rise, prov: true });
+    }
+
+    // 3) 每一下的時間：上舉、頂端、下放，以及下放後半段的手肘角度／張開角度
+    const gap = (a, b) => { for (let j = a + 1; j <= b; j++) if (T(j) - T(j - 1) > 1) return true; return false; }; // 中間超過 1 秒沒看到人
+    const reps = [];
+    for (const c of list) {
+      const hiV = sig[c.p], r = { up: null, tTop: T(0), top: null, down: null, bottom: null, elbow: null, flare: null };
+      let reach = 0;
+      if (c.prev != null) {
+        const lo0 = sig[c.prev], R0 = hiV - lo0;
+        let us = c.p; while (us > c.prev && (sig[us] - lo0) / R0 > BOT_OUT) us--;      // 離開底部
+        reach = us; while (reach < c.p && (sig[reach] - lo0) / R0 < TOP) reach++;       // 到頂
+        if (gap(us, c.p)) continue;
+        // 量到的是「離開底部(40%)→到頂(85%)」這一段，只佔整個行程的 45%，換算成整段上舉的時間
+        r._us = us; r.up = (T(reach) - T(us)) / (TOP - BOT_OUT); r.tTop = T(reach);
+      }
+      if (c.next != null) {
+        // 下放的基準低點：已確定的用實際低點；還在下放中就先假設會回到上一次的低點
+        const lo1 = !c.tail ? sig[c.next] : c.prev != null ? Math.min(sig[c.prev], sig[c.next]) : sig[c.next], R1 = hiV - lo1;
+        const end = c.tail ? n - 1 : c.next;
+        let lv = c.p; while (lv < end && (sig[lv] - lo1) / R1 >= TOP) lv++;               // 離開頂端
+        if (R1 > 0 && (sig[lv] - lo1) / R1 < TOP && !gap(c.p, lv)) {
+          r.top = T(lv) - r.tTop;
+          let rb = lv; while (rb < end && (sig[rb] - lo1) / R1 > BOT) rb++;               // 回到底部
+          if ((sig[rb] - lo1) / R1 <= BOT && !gap(lv, rb)) {
+            // 量到的是「85%→25%」這一段，只佔整個行程的 60%；換算成整段下放的時間，才能和「目標 2–3 秒」比
+            r.down = (T(rb) - T(lv)) / (TOP - BOT); r._rb = rb;
+            const a = [], fa = [];
+            for (let j = Math.floor((lv + rb) / 2); j <= rb; j++) for (const k of ['L', 'R']) {
+              if (buf[j][k].ang != null) a.push(buf[j][k].ang);
+              if (buf[j][k].abd != null) fa.push(buf[j][k].abd);
+            }
+            r.elbow = a.length ? med(a) : null; r.flare = fa.length ? med(fa) : null;
+          }
+        }
+      }
+      reps.push(r);
+    }
+    // 底部停留：這一下放到底 → 下一下開始往上
+    for (let k = 0; k + 1 < reps.length; k++) if (reps[k]._rb != null && reps[k + 1]._us != null && !gap(reps[k]._rb, reps[k + 1]._us)) reps[k].bottom = Math.max(0, T(reps[k + 1]._us) - T(reps[k]._rb));
+    for (const r of reps) { delete r._us; delete r._rb; }
+
+    // 4) 目前的階段（給畫面左上角）
+    if (dir === 1 && ext.length) {
+      const lo = sig[ext[ext.length - 1].i], s = (sig[n - 1] - lo) / Math.max(A || 0, sig[hiI] - lo, MIN_RANGE);
+      out.phase = s >= TOP ? 'top' : s > BOT_OUT ? 'up' : 'bot';
+    } else if (dir === -1 && ext.length) {
+      const p = ext[ext.length - 1].i, lo = ext.length > 1 ? Math.min(sig[ext[ext.length - 2].i], sig[loI]) : sig[loI], R = sig[p] - lo, s = R > 0 ? (sig[n - 1] - lo) / R : 0;
+      out.phase = R < need ? 'bot' : s >= TOP ? 'top' : s > BOT ? 'down' : 'bot';
+    }
+    if (reps.length) out.ok = true;
+    out.reps = reps; out.count = reps.length;
     return out;
   }
 
