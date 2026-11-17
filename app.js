@@ -355,12 +355,58 @@ function replayLoop() {
   while (lo < hi) { const m = (lo + hi) >> 1; if (tr[m].t < t) lo = m + 1; else hi = m; }
   const f = lo > 0 && t - tr[lo - 1].t < tr[lo].t - t ? tr[lo - 1] : tr[lo];
   if (f && Math.abs(f.t - t) < 0.15) draw(g, unpack(f.a), c.width, c.height);
+  drawTrail(g, t, lo, f && Math.abs(f.t - t) < 0.15 ? f : null, c.width, c.height);
   let lab = '';
   RP.reps.forEach((r, i) => {
     if (t < r.tTop - (r.up || 0)) return;
     lab = `第 ${i + 1} 下` + (r.down != null && t >= r.tTop + (r.top || 0) + r.down ? '｜' + repText(r) : '');
   });
   const L = $('rpLab'); L.textContent = lab; L.style.display = lab ? 'block' : 'none';
+}
+
+// 回放上的實際軌跡：目前這一下，兩手手腕走過的路線
+//  藍細線 = 上舉；粗線 = 下放（紅太快／黃稍快／綠好）；白點每 0.1 秒一顆，點越稀 = 動得越快
+//  綠虛線 = 手肘角度不對時，「手肘約 150°」的前臂大概該在哪（從 2D 畫面估的，僅供參考）
+function drawTrail(g, t, hiIdx, cur, W, H) {
+  const tr = RP.track, lw = Math.max(4, W / 180);
+  let ri = -1; RP.reps.forEach((r, i) => { if (t >= r.tTop - (r.up || 0)) ri = i; });
+  if (ri >= 0) {
+    const r = RP.reps[ri], s = r.tTop - (r.up || 0), tDown = r.tTop + (r.top || 0), e = r.down != null ? tDown + r.down : Infinity;
+    const col = { fast: '#ff4646', mid: '#ffd700', good: '#8cff28' }[Core.grade(r.down)] || '#ffffff';
+    for (const w of [15, 16]) {
+      let prev = null, lastDot = -1; const dots = [];
+      for (let j = 0; j <= Math.min(hiIdx, tr.length - 1); j++) {
+        const fr = tr[j]; if (fr.t < s) continue; if (fr.t > t || fr.t > e) break;
+        if (fr.a[w * 3 + 2] < 0.5) { prev = null; continue; } // 看不清楚手腕的那幾格不連線
+        const p = { x: fr.a[w * 3] * W, y: fr.a[w * 3 + 1] * H, t: fr.t };
+        if (prev && p.t - prev.t < 0.4) {
+          const down = p.t >= tDown;
+          g.strokeStyle = down ? col : 'rgba(90,190,255,.9)'; g.lineWidth = down ? lw * 0.9 : lw * 0.5; g.lineCap = 'round';
+          g.beginPath(); g.moveTo(prev.x, prev.y); g.lineTo(p.x, p.y); g.stroke();
+        }
+        if (p.t >= tDown && p.t - lastDot >= 0.1) { dots.push(p); lastDot = p.t; }
+        prev = p;
+      }
+      g.fillStyle = '#fff'; for (const p of dots) { g.beginPath(); g.arc(p.x, p.y, lw * 0.45, 0, 7); g.fill(); }
+    }
+  }
+  if (!cur) return;
+  const P = i => ({ x: cur.a[i * 3] * W, y: cur.a[i * 3 + 1] * H, v: cur.a[i * 3 + 2] });
+  for (const [si, ei, wi, oi] of [[11, 13, 15, 12], [12, 14, 16, 11]]) {
+    const S = P(si), E = P(ei), Wr = P(wi), O = P(oi); if (Math.min(S.v, E.v, Wr.v) < 0.5) continue;
+    const a1 = Math.atan2(S.y - E.y, S.x - E.x), fl = Math.hypot(Wr.x - E.x, Wr.y - E.y);
+    const cross = (S.x - E.x) * (Wr.y - E.y) - (S.y - E.y) * (Wr.x - E.x);
+    const ang = Math.acos(Math.max(-1, Math.min(1, ((S.x - E.x) * (Wr.x - E.x) + (S.y - E.y) * (Wr.y - E.y)) / ((Math.hypot(S.x - E.x, S.y - E.y) * fl) || 1)))) * 180 / Math.PI;
+    if (ang >= 140 && ang <= 165) continue; // 角度在理想範圍就不畫
+    const cand = sg => ({ x: E.x + fl * Math.cos(a1 + sg * 150 * Math.PI / 180), y: E.y + fl * Math.sin(a1 + sg * 150 * Math.PI / 180) });
+    // 彎的方向：手臂幾乎打直時看不出方向，假設往身體中線彎（兩手舉起時會往中間靠）；否則沿用目前彎的方向
+    let T;
+    if (ang > 165) { const A = cand(1), B = cand(-1); T = Math.hypot(A.x - O.x, A.y - O.y) < Math.hypot(B.x - O.x, B.y - O.y) ? A : B; }
+    else T = cand(cross >= 0 ? 1 : -1);
+    g.strokeStyle = '#8cff28'; g.lineWidth = lw * 0.6; g.setLineDash([lw * 1.2, lw * 1.2]);
+    g.beginPath(); g.moveTo(E.x, E.y); g.lineTo(T.x, T.y); g.stroke(); g.setLineDash([]);
+    g.beginPath(); g.arc(T.x, T.y, lw * 1.2, 0, 7); g.stroke();
+  }
 }
 
 function warn(t) { const w = $('warn'); w.textContent = t; w.style.display = t ? 'block' : 'none'; }
