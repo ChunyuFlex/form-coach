@@ -25,6 +25,11 @@ select,input[type=number]{font:inherit;background:#0f1210;color:var(--tx);border
 input[type=number]{width:90px}
 ol.tips{margin:6px 0 0;padding-left:20px;color:var(--mut);font-size:14px;line-height:1.7}
 #err{display:none;background:#3a1414;border:1px solid var(--r);color:#ffd0d0;border-radius:12px;padding:12px;margin-top:12px;font-size:14px;line-height:1.6;white-space:pre-wrap}
+#pv{display:none;margin-bottom:10px}
+#pv.on{display:block}
+#pv video{display:block;width:100%;max-height:50vh;background:#000;border-radius:10px;object-fit:contain}
+#pv video.mirror{transform:scaleX(-1)}
+button.sm{padding:10px;font-size:15px;margin-bottom:4px;background:#0f1210}
 /* session */
 #session{padding:0;max-width:none;position:fixed;inset:0;background:#000}
 #session.on{display:block}
@@ -34,7 +39,7 @@ ol.tips{margin:6px 0 0;padding-left:20px;color:var(--mut);font-size:14px;line-he
 .hud{position:absolute;z-index:3;pointer-events:none}
 #phase{top:14px;left:14px;font-size:clamp(22px,5vw,40px);font-weight:900;padding:8px 16px;border-radius:12px;background:var(--b);color:#08131c}
 #fb{top:calc(30px + clamp(40px,8vw,64px));left:14px;font-size:clamp(16px,3.6vw,28px);font-weight:800;padding:7px 14px;border-radius:10px;display:none}
-#warn{bottom:96px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);border:2px solid var(--y);color:var(--y);padding:8px 14px;border-radius:10px;font-weight:700;display:none;white-space:nowrap;font-size:15px}
+#warn{top:64%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);border:2px solid var(--y);color:var(--y);padding:8px 14px;border-radius:10px;font-weight:700;display:none;white-space:nowrap;font-size:15px}
 #count{right:16px;bottom:96px;width:clamp(110px,24vw,190px);aspect-ratio:1;border-radius:50%;background:rgba(20,20,20,.8);border:8px solid var(--g);display:flex;align-items:center;justify-content:center;font-size:clamp(56px,13vw,110px);font-weight:900}
 #cd{inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(0,0,0,.6);font-weight:900}
 #cd b{font-size:42vmin;line-height:1;color:var(--g)}
@@ -73,6 +78,8 @@ ol.tips{margin:6px 0 0;padding-left:20px;color:var(--mut);font-size:14px;line-he
   <div id="err"></div>
   <div id="modelFix" style="display:none;margin-top:10px"><button class="sec" id="btnModel">選擇模型檔（.task）</button><input type="file" id="modelFile" accept=".task,application/octet-stream" hidden></div>
   <div class="card">
+    <div id="pv"><video id="pvVid" playsinline muted></video><p class="tgt">調整手機位置：躺下、雙手張開時，上半身和兩顆啞鈴都要在畫面內。</p></div>
+    <button class="sec sm" id="btnPv">預覽鏡頭畫面</button>
     <label class="f">鏡頭<select id="cam"><option value="user">前鏡頭（看得到畫面）</option><option value="environment">後鏡頭</option></select></label>
     <label class="f">語音提示<select id="voice"><option value="1">開</option><option value="0">關</option></select></label>
     <label class="f">模型<select id="model"><option value="lite">輕量（舊手機）</option><option value="full" selected>標準</option><option value="heavy">高精度（較慢）</option></select></label>
@@ -82,7 +89,7 @@ ol.tips{margin:6px 0 0;padding-left:20px;color:var(--mut);font-size:14px;line-he
   <ol class="tips">
     <li>手機放在頭頂後方約 1.5–2 公尺，架高一點（椅子或矮櫃上）往下拍，就像你上次拍的角度。</li>
     <li>雙手張開時，兩顆啞鈴和上半身都要在畫面內。</li>
-    <li>按「開始」後有 5 秒倒數，躺好、手臂張開放在地上等「開始」。</li>
+    <li>按「開始」後有 5 秒倒數。倒數完它會等你躺好不動約 1 秒，聽到「開始」才開始數；人不在畫面裡不會計次。</li>
     <li>做完停著不動 10 秒會自動結束並報結果。</li>
     <li>手肘角度是從畫面上量的，這個拍法最準；從側面或腳邊拍時角度僅供參考。</li>
   </ol>

@@ -21,6 +21,20 @@ const Core = (() => {
     return o;
   }
 
+  // 人在畫面裡的大小（像素）：肩寬與兩側軀幹長度取最大
+  function size(lm, W, H) {
+    const d = (a, b) => Math.hypot((lm[a].x - lm[b].x) * W, (lm[a].y - lm[b].y) * H);
+    return Math.max(d(11, 12), d(11, 23), d(12, 24));
+  }
+  // 這一格是否真的看到人：至少一側的肩、肘看得清楚，而且人不能小到不合理（背景雜物誤判）
+  function valid(lm, W, H) {
+    const v = i => lm[i].visibility ?? 0;
+    if (Math.max(Math.min(v(11), v(13)), Math.min(v(12), v(14))) < 0.6) return false;
+    return size(lm, W, H) >= 0.08 * Math.min(W, H);
+  }
+  // 兩肩中點（像素）與人的大小，用來判斷是否已就位不動
+  function center(lm, W, H) { return { x: (lm[11].x + lm[12].x) / 2 * W, y: (lm[11].y + lm[12].y) / 2 * H, size: size(lm, W, H) }; }
+
   // buf: [{t(秒), L:{v,vis,torso}, R:{...}}]
   function analyze(buf) {
     const out = { ok: false, count: 0, reps: [], phase: 'bot', s: 0, side: 'L', vis: 0 };
@@ -45,6 +59,8 @@ const Core = (() => {
     if (st === 'top') { cur = { up: null, tTop: buf[0].t, top: null, down: null, bottom: null, elbow: null }; reps.push(cur); }
     for (let i = 1; i < n; i++) {
       const s = (sig[i] - lo) / R, t = buf[i].t;
+      // 中間超過 1 秒沒看到人：不把前後接起來當成一下，從底部重新開始
+      if (t - buf[i - 1].t > 1 && st !== 'bot') { st = 'bot'; botStart = null; if (cur) delete cur._pause; }
       if (st === 'bot') {
         if (s > BOT_OUT) { st = 'up'; upStart = t; if (cur && botStart != null && cur.bottom == null) cur._pause = t - botStart; }
       } else if (st === 'up') {
@@ -75,6 +91,6 @@ const Core = (() => {
   const grade = d => d == null ? null : d < 1.0 ? 'fast' : d < 1.8 ? 'mid' : 'good';
   // 飛鳥的手肘角度評級：>165° 鎖死、140–165° 微彎（理想）、<140° 彎太多
   const gradeElbow = a => a == null ? null : a > 165 ? 'lock' : a >= 140 ? 'good' : 'bent';
-  return { sample, analyze, avg, grade, gradeElbow, TOP, BOT };
+  return { sample, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
 })();
 if (typeof module !== 'undefined') module.exports = Core;

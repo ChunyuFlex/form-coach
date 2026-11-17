@@ -82,7 +82,8 @@ async function loadModel() {
   let fileset; try { fileset = await lib.FilesetResolver.forVisionTasks(base + "/wasm"); } catch (e) { throw new StepError('wasm', e.message || String(e)); }
   const mk = delegate => lib.PoseLandmarker.createFromOptions(fileset, {
     baseOptions: { modelAssetBuffer: bytes, delegate }, runningMode: 'VIDEO', numPoses: 1,
-    minPoseDetectionConfidence: 0.3, minPosePresenceConfidence: 0.3, minTrackingConfidence: 0.3
+    // 首次偵測用較嚴的 0.5（避免把背景當成人）；找到人之後用 0.3 持續追蹤（躺姿較難辨認）
+    minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.3, minTrackingConfidence: 0.3
   });
   try { S.landmarker = await mk('GPU'); }
   catch { try { S.landmarker = await mk('CPU'); } catch (e) { throw new StepError('wasm', e.message || String(e)); } }
@@ -101,8 +102,32 @@ function addLocalOption(name) {
 }
 { const n = store.get('fa_local', null); if (n) { addLocalOption(n); if (store.get('fa_model', null) === 'local') $('model').value = 'local'; } }
 
+// 首頁的鏡頭預覽：選鏡頭或按「預覽」就能看到畫面、調整手機位置
+const camOpts = () => ({ audio: false, video: { facingMode: $('cam').value, width: { ideal: 1280 }, height: { ideal: 720 } } });
+let pvStream = null, pvSeq = 0;
+function stopPreview() {
+  pvSeq++; pvStream?.getTracks().forEach(t => t.stop()); pvStream = null;
+  $('pvVid').srcObject = null; $('pv').classList.remove('on'); $('btnPv').textContent = '預覽鏡頭畫面';
+}
+async function startPreview() {
+  stopPreview(); $('err').style.display = 'none';
+  if (!navigator.mediaDevices?.getUserMedia) return fail('這個瀏覽器無法使用鏡頭。請用 https 網址開啟，並使用 Chrome 或 Safari。');
+  const seq = pvSeq; let st;
+  try { st = await navigator.mediaDevices.getUserMedia(camOpts()); }
+  catch (e) { return fail('無法開啟鏡頭：' + (e.message || e.name) + '\n請確認已允許相機權限。'); }
+  if (seq !== pvSeq) { st.getTracks().forEach(t => t.stop()); return; } // 期間又切換了鏡頭或離開首頁
+  pvStream = st; const v = $('pvVid');
+  v.classList.toggle('mirror', $('cam').value === 'user'); v.srcObject = st;
+  $('pv').classList.add('on'); $('btnPv').textContent = '關閉預覽';
+  try { await v.play(); } catch {}
+}
+$('btnPv').onclick = () => pvStream ? stopPreview() : startPreview();
+$('cam').addEventListener('change', startPreview);
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopPreview(); });
+
 function resetSet() {
   S.buf = []; S.res = null; S.said = 0; S.fbDone = 0; S.recording = false; S.lastRepT = 0;
+  S.armed = false; S.steady = null; S.miss = 0; S.armT = 0; S.missSaid = false;
   $('count').textContent = '0'; $('fb').style.display = 'none'; $('warn').style.display = 'none';
   setPhase('準備', 'var(--b)');
 }
@@ -111,9 +136,10 @@ function setPhase(t, c) { const p = $('phase'); p.textContent = t; p.style.backg
 async function startLive() {
   $('err').style.display = 'none';
   if (!navigator.mediaDevices?.getUserMedia) return fail('這個瀏覽器無法使用鏡頭。請用 https 網址開啟，並使用 Chrome 或 Safari。');
+  stopPreview();
   S.mode = 'live'; resetSet(); show('session'); say('準備', true); // 先在點擊事件內發聲一次，解鎖手機語音
   try {
-    S.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: $('cam').value, width: { ideal: 1280 }, height: { ideal: 720 } } });
+    S.stream = await navigator.mediaDevices.getUserMedia(camOpts());
   } catch (e) { return fail('無法開啟鏡頭：' + (e.message || e.name) + '\n請確認已允許相機權限。'); }
   $('stage').classList.toggle('mirror', $('cam').value === 'user');
   vid.srcObject = S.stream; await vid.play();
@@ -127,14 +153,19 @@ function countdown() {
   const tick = () => {
     if (!S.running) return;
     if (n > 0) { b.textContent = n; say(String(n), true); n--; setTimeout(tick, 1000); }
-    else { cd.style.display = 'none'; say('開始', true); S.recording = true; S.t0 = performance.now() / 1000; S.lastRepT = S.t0; setPhase(...PH.bot); }
+    else { cd.style.display = 'none'; S.armed = true; S.steady = null; S.armT = performance.now() / 1000; setPhase('就位後不要動', 'var(--b)'); } // 等看到人、而且不動約 1 秒才開始記錄
   };
   tick();
+}
+function begin() {
+  S.armed = false; S.recording = true; S.t0 = performance.now() / 1000; S.lastRepT = S.t0;
+  warn(''); setPhase(...PH.bot); say('開始', true);
 }
 
 async function startUpload(file) {
   $('err').style.display = 'none';
   S.mode = 'upload'; resetSet(); show('session'); $('stage').classList.remove('mirror');
+  stopPreview();
   S.url = URL.createObjectURL(file); vid.srcObject = null; vid.src = S.url;
   try { await loadModel(); } catch (e) { return loadFail(e); }
   try { await vid.play(); } catch (e) { return fail('這支影片無法播放：' + (e.message || e.name)); }
@@ -158,16 +189,30 @@ function loop() {
   if (cv.width !== W) { cv.width = W; cv.height = H; }
   ctx.clearRect(0, 0, W, H);
   let lm = r.landmarks?.[0];
-  if (!lm) { warn('沒偵測到人，請讓全身入鏡'); return; }
   // 有些版本的程式庫不回傳「可見度」：這時一律當作看得到，否則骨架畫不出來、也無法分析
-  if (!lm.some(p => p.visibility > 0)) lm = lm.map(p => ({ x: p.x, y: p.y, z: p.z, visibility: 1 }));
+  if (lm && !lm.some(p => p.visibility > 0)) lm = lm.map(p => ({ x: p.x, y: p.y, z: p.z, visibility: 1 }));
+  // 沒看到人（或只是背景被誤判成人）：這一格不畫、不記錄、不計次
+  if (!lm || !Core.valid(lm, W, H)) {
+    S.steady = null;
+    if (++S.miss > 8) warn('沒看到你，請讓上半身和雙手入鏡');
+    if (S.armed && !S.missSaid && now / 1000 - S.armT > 6) { S.missSaid = true; say('沒看到你，請調整手機位置'); }
+    return;
+  }
+  S.miss = 0;
   draw(lm, W, H);
-  if (!S.recording) return;
+  if (!S.recording) {
+    warn('');
+    if (S.armed) {
+      const c = Core.center(lm, W, H), tn = now / 1000;
+      if (!S.steady || Math.hypot(c.x - S.steady.x, c.y - S.steady.y) > 0.25 * c.size) S.steady = { x: c.x, y: c.y, t: tn };
+      else if (tn - S.steady.t >= 1) begin();
+    }
+    return;
+  }
   const t = S.mode === 'upload' ? vid.currentTime : now / 1000;
   S.buf.push({ t, ...Core.sample(lm, W, H) });
   const a = S.res = Core.analyze(S.buf);
-  S.lowVis = a.vis < 0.4 ? (S.lowVis || 0) + 1 : 0; // 連續約 1 秒看不清楚才提醒
-  warn(S.lowVis > 30 ? '看不清楚肩膀或手肘，調整一下手機位置' : '');
+  warn('');
   if (a.ok) setPhase(...PH[a.phase]);
   if (a.count > S.said) { S.said = a.count; S.lastRepT = t; $('count').textContent = a.count; say(String(a.count)); }
   // 剛放到底：給這一下的回饋
@@ -270,7 +315,7 @@ $('modelFile').onchange = async e => {
   msg.textContent = '模型檔已載入：' + f.name + '\n請再按一次「開始即時分析」或「上傳影片分析」。';
 };
 $('btnHome').onclick = $('btnHome2').onclick = () => show('home');
-$('btnHist').onclick = () => { renderHistory(); show('history'); };
+$('btnHist').onclick = () => { stopPreview(); renderHistory(); show('history'); };
 let clearArmed = 0;
 $('btnClear').onclick = e => {
   if (Date.now() - clearArmed < 4000) { store.set('fa_hist', []); renderHistory(); e.target.textContent = '清除紀錄'; clearArmed = 0; }
