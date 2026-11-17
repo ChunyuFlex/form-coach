@@ -24,7 +24,7 @@ const EX = {
     good: '下放速度和手肘角度都控制得很好，可以考慮加重量或次數。'
   },
   press: {
-    name: '地板啞鈴臥推', sp: [0.8, 1.5], target: '2 秒左右', count: '1、2', elbow: false, flare: true,
+    name: '地板啞鈴臥推', sp: [0.8, 1.5], target: '2 秒左右', count: '1、2', elbow: false, flare: true, pause: true,
     sub: '地板啞鈴臥推｜即時骨架、自動數次數，語音提醒下放速度與手肘是否張太開，並記錄底部有沒有停住。',
     cd: '躺好，上臂貼地、啞鈴在胸口兩側',
     std: { kind: 'press', label: '標準', down: 2, up: 1, flare: 55, color: GREEN },
@@ -35,8 +35,24 @@ const EX = {
     },
     barsTgt: '目標：下放 2 秒左右（綠色長條）、手肘張開 45–60°（上臂和身體的夾角；超過 75° 算太開，低於 25° 算太貼）。張開角度是用模型估計的 3D 姿勢算的，可能有十幾度誤差，僅供參考。',
     good: '下放速度和手肘張開角度都控制得很好，可以考慮加重量或次數。'
+  },
+  bench: {
+    name: '臥推椅啞鈴胸推', sp: [0.8, 1.5], target: '2 秒左右', count: '1、2', elbow: false, flare: true, depth: true,
+    sub: '臥推椅啞鈴胸推｜即時骨架、自動數次數，語音提醒下放速度與手肘是否張太開，並記錄每一下放得夠不夠低。',
+    cd: '在椅上躺好，啞鈴停在胸口上方或胸口兩側',
+    place: '手機放在頭頂的斜後方約 1.5–2 公尺，要比臥推椅高（大約胸口到肩膀的高度）往下拍。肩膀、手肘要拍得到，髖部最好也在畫面內；注意椅背和啞鈴不要擋住肩膀。',
+    std: { kind: 'press', bench: true, label: '標準', down: 2, up: 1, flare: 55, low: -10, color: GREEN },
+    stdTxt: '從腳邊看過去的樣子。啞鈴從胸口上方用約 2 秒放下，放到手肘和肩膀差不多高或略低（胸口有被拉開的感覺），再推回去；前臂保持垂直，手肘不要張到和肩膀成一直線，上臂和身體大約夾 45–60°。',
+    bad: {
+      fast: ['太快', { kind: 'press', bench: true, label: '太快', down: 0.4, up: 1, flare: 55, low: -10, color: RED }, '右邊是「放太快」：啞鈴是掉下去的，最低點沒有控制，肩膀最容易在這時受傷。標準是用約 2 秒控制著放下。'],
+      wide: ['手肘太開', { kind: 'press', bench: true, label: '手肘太開', down: 2, up: 1, flare: 90, low: -10, color: RED }, '右邊是「手肘太開」：上臂和身體接近 90°，在臥推椅上手肘又會沉到肩膀以下，肩膀前側壓力很大。標準是把手肘往身體收一點，夾 45–60°。從腳邊看差別不大，從頭頂往下看會很明顯。'],
+      shallow: ['放不夠低', { kind: 'press', bench: true, label: '放不夠低', down: 1.2, up: 0.8, flare: 55, low: 35, color: YEL }, '右邊是「放不夠低」：只做上半段，胸肌沒有被拉開，等於白白浪費了臥推椅比地板多出來的行程。標準是放到手肘和肩膀差不多高或略低。']
+    },
+    barsTgt: '目標：下放 2 秒左右（綠色長條）、手肘張開 45–60°（超過 75° 算太開）、最低點手肘降到和肩膀差不多高。張開角度和深度都是用模型估計的 3D 姿勢算的，可能有十幾度誤差，僅供參考。',
+    good: '下放速度、手肘張開角度和下放深度都控制得很好，可以考慮加重量或次數。'
   }
 };
+const PLACE = '手機放在頭頂後方約 1.5–2 公尺，架高一點（椅子或矮櫃上）往下拍，就像你上次拍的角度。';
 // 目前的動作：一組進行中用開始時選的（S.ex），否則用選單上的
 const cur = () => EX[S.ex] || EX[$('ex').value] || EX.fly;
 const grade = (d, e = cur()) => d == null ? null : d < e.sp[0] ? 'fast' : d < e.sp[1] ? 'mid' : 'good';
@@ -270,7 +286,8 @@ function loop() {
   S.goneT = 0;
   const t = S.mode === 'upload' ? vid.currentTime : now / 1000;
   const smp = Core.sample(lm, W, H), fl = Core.flare(r.worldLandmarks?.[0], lm);
-  smp.L.abd = fl.L; smp.R.abd = fl.R; S.lastFlare = fl;
+  for (const k of ['L', 'R']) { smp[k].abd = fl[k]?.abd ?? null; smp[k].elev = fl[k]?.elev ?? null; }
+  S.lastFlare = fl;
   S.buf.push({ t, ...smp });
   const a = S.res = Core.analyze(S.buf);
   warn('');
@@ -331,12 +348,13 @@ function demo(cv, panels) {
       else if (td < 0) { k = 1; txt = '頂端'; }
       else if (td < p.down) { const u = td / p.down; k = 1 - (p.down < 1 ? u * u : ease(u)); txt = `下放 ${td.toFixed(1)} 秒`; } // 太快的看起來像掉下去
       else { k = 0; txt = `下放共 ${p.down.toFixed(1)} 秒`; }
-      const cx = i * pw + pw / 2, fl = h - 30, L = Math.min((pw / 2 - 12) / 1.25, (fl - 30) / 1.2);
-      const sx = 0.2 * L, sy = fl - 0.13 * L, U = 0.5 * L, F = 0.5 * L, bend = (180 - (p.elbow ?? 150)) * Math.PI / 180;
+      // p.bench：躺在臥推椅上（肩膀離地、手肘可以沉到肩膀以下）；p.low：最低點時手肘比肩膀高幾度
+      const cx = i * pw + pw / 2, fl = h - 30, L = Math.min((pw / 2 - 12) / 1.25, (fl - 30) / (p.bench ? 1.55 : 1.2));
+      const sx = 0.2 * L, sy = fl - (p.bench ? 0.45 : 0.13) * L, U = 0.5 * L, F = 0.5 * L, bend = (180 - (p.elbow ?? 150)) * Math.PI / 180;
       const pts = (kk, s) => { // s = ±1 左右手；回傳 [肩, 肘, 手]
         if (p.kind === 'press') { // 臥推：上臂從貼地抬到垂直，前臂全程垂直
           // 從腳邊看，手肘往外的距離 = 上臂長 × sin(張開角度)
-          const a = kk * Math.PI / 2, S = [cx + s * sx, sy], E = [S[0] + s * Math.sin((p.flare ?? 55) * Math.PI / 180) * U * Math.cos(a), S[1] - U * Math.sin(a)];
+          const low = p.low ?? 0, a = (low + kk * (90 - low)) * Math.PI / 180, S = [cx + s * sx, sy], E = [S[0] + s * Math.sin((p.flare ?? 55) * Math.PI / 180) * U * Math.cos(a), S[1] - U * Math.sin(a)];
           return [S, E, [E[0], E[1] - F]];
         }
         const th = kk * 76 * Math.PI / 180, S = [cx + s * sx, sy];
@@ -345,6 +363,7 @@ function demo(cv, panels) {
       };
       g.font = '700 14px system-ui,sans-serif'; g.textAlign = 'center'; g.fillStyle = p.color; g.fillText(p.label, cx, 16);
       g.strokeStyle = '#2c342d'; g.lineWidth = 2; g.setLineDash([]); g.beginPath(); g.moveTo(i * pw + 8, fl); g.lineTo((i + 1) * pw - 8, fl); g.stroke();
+      if (p.bench) { g.fillStyle = '#232a24'; g.fillRect(cx - 0.17 * L, sy + 0.1 * L, 0.34 * L, 0.07 * L); g.fillRect(cx - 0.03 * L, sy + 0.17 * L, 0.06 * L, fl - sy - 0.17 * L); } // 臥推椅
       g.fillStyle = '#39443a'; g.beginPath(); g.arc(cx, sy - 0.1 * L, 0.11 * L, 0, 7); g.fill();               // 頭
       g.fillStyle = '#2c342d'; g.beginPath(); g.ellipse(cx, sy, sx + 0.05 * L, 0.13 * L, 0, 0, 7); g.fill();    // 胸
       for (const s of [-1, 1]) {
@@ -372,7 +391,7 @@ function setDemo(k) {
 }
 $('demoChips').onclick = e => { const b = e.target.closest('button'); if (b) setDemo(b.dataset.k); };
 // 切換動作：首頁的說明文字和示範跟著換
-function applyEx() { const e = EX[$('ex').value] || EX.fly; $('sub').textContent = e.sub + '影像只在這支手機上運算，不會上傳。'; setDemo('std'); }
+function applyEx() { const e = EX[$('ex').value] || EX.fly; $('sub').textContent = e.sub + '影像只在這支手機上運算，不會上傳。'; $('placeTip').textContent = e.place || PLACE; setDemo('std'); }
 $('ex').addEventListener('change', applyEx);
 applyEx();
 // 骨架點壓成小陣列存起來，回放時疊在影片上
@@ -524,8 +543,10 @@ function finish(cutT) {
 const f1 = x => x == null ? '–' : x.toFixed(1);
 function renderSummary(a, mode) {
   const kg = parseFloat($('kg').value) || null;
-  const m = { down: Core.avg(a.reps, 'down'), bottom: Core.avg(a.reps, 'bottom'), up: Core.avg(a.reps, 'up'), elbow: Core.avg(a.reps, 'elbow'), flare: Core.avg(a.reps, 'flare') };
-  const E = cur(), g = grade(m.down), eg = gradeElbow(m.elbow), fg = gradeFlare(m.flare), fc = { wide: 'fast', good: 'good', tuck: 'mid' }[fg] || '', noPause = !E.elbow && m.bottom != null && m.bottom < 0.3;
+  const m = { down: Core.avg(a.reps, 'down'), bottom: Core.avg(a.reps, 'bottom'), up: Core.avg(a.reps, 'up'), elbow: Core.avg(a.reps, 'elbow'), flare: Core.avg(a.reps, 'flare'), depth: Core.avg(a.reps, 'depth') };
+  const E = cur(), g = grade(m.down), eg = gradeElbow(m.elbow), fg = gradeFlare(m.flare), fc = { wide: 'fast', good: 'good', tuck: 'mid' }[fg] || '', noPause = !!E.pause && m.bottom != null && m.bottom < 0.3;
+  const dg = E.depth ? Core.gradeDepth(m.depth) : null, dc = { good: 'good', mid: 'mid', shallow: 'mid' }[dg] || '';
+  const depthTxt = d => d == null ? '–' : Math.abs(d) < 3 ? '和肩膀同高' : d < 0 ? `比肩膀低 ${(-d).toFixed(0)}°` : `比肩膀高 ${d.toFixed(0)}°`;
   $('barsTgt').textContent = E.barsTgt;
   $('sumMeta').textContent = new Date().toLocaleString('zh-TW', { hour12: false }) + '｜' + E.name + (kg ? `｜${kg} 公斤` : '') + (mode === 'upload' ? '｜上傳影片' : '');
   const ec = { lock: 'fast', good: 'good', bent: 'mid' }[eg] || '';
@@ -533,7 +554,8 @@ function renderSummary(a, mode) {
     `<div><small>次數</small><b>${a.count}</b><em>&nbsp;</em></div>` +
     `<div><small>平均下放</small><b class="${g || ''}">${f1(m.down)} 秒</b><em class="${g || ''}">${{ fast: '太快，目標 ' + E.target, mid: '再慢一點，目標 ' + E.target, good: '很好' }[g] || ''}</em></div>` +
     (!E.elbow ? `<div><small>手肘張開角度（估計）</small><b class="${fc}">${m.flare == null ? '–' : m.flare.toFixed(0) + '°'}</b><em class="${fc}">${{ wide: '太開，往身體收一點', good: '可以，理想 45–60°', tuck: '太貼身體，打開一點' }[fg] || '這次量不到'}</em></div>` +
-      `<div><small>底部停留</small><b class="${noPause ? 'mid' : m.bottom != null ? 'good' : ''}">${f1(m.bottom)} 秒</b><em class="${noPause ? 'mid' : 'good'}">${m.bottom == null ? '&nbsp;' : noPause ? '幾乎沒停，別用彈的' : '有停住，很好'}</em></div>` : '') +
+      (E.depth ? `<div><small>最低點的手肘（估計）</small><b class="${dc}" style="font-size:20px">${depthTxt(m.depth)}</b><em class="${dc}">${{ good: '夠低，很好', mid: '可以再低一點', shallow: '放不夠低' }[dg] || '這次量不到'}</em></div>`
+        : `<div><small>底部停留</small><b class="${noPause ? 'mid' : m.bottom != null ? 'good' : ''}">${f1(m.bottom)} 秒</b><em class="${noPause ? 'mid' : 'good'}">${m.bottom == null ? '&nbsp;' : noPause ? '幾乎沒停，別用彈的' : '有停住，很好'}</em></div>`) : '') +
     (!E.elbow ? '' : `<div><small>底部手肘角度</small><b class="${ec}">${m.elbow == null ? '–' : m.elbow.toFixed(0) + '°'}</b><em class="${ec}">${{ lock: '打直了，要微彎', good: '微彎，很好', bent: '彎太多，像臥推' }[eg] || '看不到手腕，無法判斷'}</em></div>` +
     `<div><small>平均上舉</small><b>${f1(m.up)} 秒</b><em>底部停留 ${f1(m.bottom)} 秒</em></div>`);
   const tips = [];
@@ -543,13 +565,15 @@ function renderSummary(a, mode) {
   if (fg === 'tuck') tips.push('手肘太貼身體，會變成主要練三頭肌。稍微打開，上臂和身體大約夾 45–60°。');
   if (g === 'fast') tips.push(`下放太快，啞鈴幾乎是掉下去的。放下時心裡數「${E.count}」。`);
   if (g === 'mid') tips.push(`下放有在控制了，再慢一點，目標 ${E.target}。`);
+  if (dg === 'shallow') tips.push('放得不夠低，只做了上半段。把啞鈴放到手肘和肩膀差不多高（胸口有被拉開的感覺）再推；做不到的話先減重量。');
+  if (dg === 'mid') tips.push('深度還可以，再放低一點點，讓手肘降到和肩膀差不多高，胸肌會拉得更開。');
   if (noPause) tips.push('底部幾乎沒有停。上臂碰地後停一下再推，不要借地板的反彈。');
   $('verdict').innerHTML = !a.count ? '沒有偵測到完整的動作。請確認全身入鏡，再試一次。'
     : tips.length ? tips.join('<br>') : E.good;
   // 標準 vs 你這一組：用這一組量到的平均秒數與手肘角度畫成同一種簡圖來對照
   if (a.count && m.down != null) {
     const key = repKey({ down: m.down, elbow: m.elbow, flare: m.flare });
-    demo($('cmpCv'), [E.std, { kind: E.std.kind, label: '你這一組', down: m.down, up: m.up || 1.2, elbow: m.elbow ?? 150, flare: m.flare ?? 55, color: key === 'good' ? GREEN : BADKEY(key) ? RED : YEL }]);
+    demo($('cmpCv'), [E.std, { kind: E.std.kind, bench: E.std.bench, low: E.depth && m.depth != null ? Math.max(-30, Math.min(60, m.depth)) : E.std.low, label: '你這一組', down: m.down, up: m.up || 1.2, elbow: m.elbow ?? 150, flare: m.flare ?? 55, color: key === 'good' ? GREEN : BADKEY(key) ? RED : YEL }]);
     $('cmpTxt').textContent = '右邊是依你這一組量到的平均值畫的：下放 ' + m.down.toFixed(1) + ' 秒（標準 ' + E.target + '）'
       + (!E.elbow ? '' : m.elbow != null ? '、手肘 ' + m.elbow.toFixed(0) + '°（標準約 150°）' : '、手肘角度這次量不到，先用標準角度畫')
       + (!E.flare ? '' : m.flare != null ? '、手肘張開 ' + m.flare.toFixed(0) + '°（標準 45–60°）' : '、張開角度這次量不到，先用標準角度畫') + '。兩邊同時開始每一下，可以直接看出' + (E.elbow ? '速度和手臂形狀' : '速度') + '差在哪。這是簡圖，不是你的實際影像；實際影像看下面的回放。';
@@ -564,7 +588,7 @@ function renderSummary(a, mode) {
   }).join('') || '<p class="tgt">沒有資料</p>';
   if (a.count) {
     const h = store.get('fa_hist', []);
-    h.unshift({ d: Date.now(), n: a.count, down: m.down, bottom: m.bottom, elbow: E.elbow ? m.elbow : null, flare: E.flare ? m.flare : null, kg, mode, ex: S.ex });
+    h.unshift({ d: Date.now(), n: a.count, down: m.down, bottom: m.bottom, elbow: E.elbow ? m.elbow : null, flare: E.flare ? m.flare : null, depth: E.depth ? m.depth : null, kg, mode, ex: S.ex });
     store.set('fa_hist', h.slice(0, 200));
   }
 }

@@ -8,7 +8,7 @@ const Core = (() => {
 
   // 從一格的關節點取出左右兩側的「手肘相對肩膀的高度」(像素) 與軀幹長度
   function sample(lm, W, H) {
-    const o = {};
+    const o = { sw: Math.hypot((lm[11].x - lm[12].x) * W, (lm[11].y - lm[12].y) * H) }; // 肩寬（看不到髖部時當作尺度）
     for (const k in SIDES) {
       const [s, e, h] = SIDES[k].map(i => lm[i]);
       const w = lm[WRIST[k]], v1 = [(s.x - e.x) * W, (s.y - e.y) * H], v2 = [(w.x - e.x) * W, (w.y - e.y) * H];
@@ -26,17 +26,26 @@ const Core = (() => {
   // 手肘張開角度：上臂（肩→肘）與軀幹（肩→髖）的夾角（度）。
   // 用模型估計的 3D 座標（world landmarks）算，所以不受拍攝角度影響；lm 只用來看可見度
   function flare(wl, lm) {
+    // 回傳每一側 { abd: 張開角度, elev: 手肘比肩膀高幾度（躺著時往天花板為正；負的表示手肘沉到肩膀以下）}
     const o = { L: null, R: null };
     if (!wl) return o;
     // 軀幹方向用「兩肩中點 → 兩髖中點」（單側的肩→髖會往內斜，角度會偏大）
-    const mid = (i, j, c) => (wl[i][c] + wl[j][c]) / 2;
-    const b = ['x', 'y', 'z'].map(c => mid(23, 24, c) - mid(11, 12, c));
+    const mid = (i, j, c) => (wl[i][c] + wl[j][c]) / 2, C3 = ['x', 'y', 'z'];
+    const ms = C3.map(c => mid(11, 12, c)), b = C3.map((c, i) => mid(23, 24, c) - ms[i]);
+    // 胸口朝向（身體正面的法線）= 肩線 × 軀幹方向；用鼻子在哪一側決定正負
+    const ac = C3.map(c => wl[11][c] - wl[12][c]);
+    let nrm = [ac[1] * b[2] - ac[2] * b[1], ac[2] * b[0] - ac[0] * b[2], ac[0] * b[1] - ac[1] * b[0]];
+    const nl = Math.hypot(...nrm) || 1; nrm = nrm.map(x => x / nl);
+    if (C3.reduce((s, c, i) => s + (wl[0][c] - ms[i]) * nrm[i], 0) < 0) nrm = nrm.map(x => -x);
     for (const k in SIDES) {
       const [s, e] = SIDES[k], v = i => lm[i].visibility ?? 0;
       if (Math.min(v(s), v(e)) < 0.5 || Math.min(v(23), v(24)) < 0.3) continue;
-      const a = [wl[e].x - wl[s].x, wl[e].y - wl[s].y, wl[e].z - wl[s].z];
-      const cos = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (Math.hypot(...a) * Math.hypot(...b) || 1);
-      o[k] = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+      const a = [wl[e].x - wl[s].x, wl[e].y - wl[s].y, wl[e].z - wl[s].z], al = Math.hypot(...a) || 1;
+      const cos = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (al * Math.hypot(...b) || 1);
+      o[k] = {
+        abd: Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI,
+        elev: Math.asin(Math.max(-1, Math.min(1, (a[0] * nrm[0] + a[1] * nrm[1] + a[2] * nrm[2]) / al))) * 180 / Math.PI
+      };
     }
     return o;
   }
@@ -66,8 +75,10 @@ const Core = (() => {
     const side = sum('L') >= sum('R') ? 'L' : 'R';
     out.side = side; out.vis = buf[n - 1][side].vis;
     const torsos = buf.map(f => f[side].torso).filter(x => x);
-    if (!torsos.length) return out;
-    const torso = med(torsos), raw = buf.map(f => f[side].v / torso), sig = new Array(n), T = i => buf[i].t;
+    // 看不到髖部（例如被臥推椅或啞鈴擋住）時，用肩寬 × 1.5 當作軀幹長度
+    const sws = buf.map(f => f.sw).filter(x => x);
+    if (!torsos.length && !sws.length) return out;
+    const torso = torsos.length ? med(torsos) : 1.5 * med(sws), raw = buf.map(f => f[side].v / torso), sig = new Array(n), T = i => buf[i].t;
     for (let i = 0; i < n; i++) sig[i] = med(raw.slice(Math.max(0, i - 2), Math.min(n, i + 3)));
     const sorted = [...sig].sort((a, b) => a - b), q = p => sorted[Math.min(n - 1, Math.floor(p * n))], span = sorted[n - 1] - sorted[0];
     out.s = span > 1e-6 ? (sig[n - 1] - sorted[0]) / span : 0;
@@ -104,7 +115,7 @@ const Core = (() => {
     const gap = (a, b) => { for (let j = a + 1; j <= b; j++) if (T(j) - T(j - 1) > 1) return true; return false; }; // 中間超過 1 秒沒看到人
     const reps = [];
     for (const c of list) {
-      const hiV = sig[c.p], r = { up: null, tTop: T(0), top: null, down: null, bottom: null, elbow: null, flare: null };
+      const hiV = sig[c.p], r = { up: null, tTop: T(0), top: null, down: null, bottom: null, elbow: null, flare: null, depth: null };
       let reach = 0;
       if (c.prev != null) {
         const lo0 = sig[c.prev], R0 = hiV - lo0;
@@ -131,6 +142,10 @@ const Core = (() => {
               if (buf[j][k].abd != null) fa.push(buf[j][k].abd);
             }
             r.elbow = a.length ? med(a) : null; r.flare = fa.length ? med(fa) : null;
+            // 下放深度：從回到底部到真正最低點這段，手肘相對肩膀最低到幾度（取最低的 10% 位置，避免單格雜訊）
+            const dv = [];
+            for (let j = rb; j <= end; j++) for (const k of ['L', 'R']) if (buf[j][k].elev != null) dv.push(buf[j][k].elev);
+            if (dv.length) { dv.sort((x, y) => x - y); r.depth = dv[Math.floor(dv.length * 0.1)]; }
           }
         }
       }
@@ -160,6 +175,8 @@ const Core = (() => {
   const gradeElbow = a => a == null ? null : a > 165 ? 'lock' : a >= 140 ? 'good' : 'bent';
   // 臥推的手肘張開角度：>75° 太開（肩膀壓力大）、<25° 太貼身體、其餘可以（理想 45–60°）
   const gradeFlare = a => a == null ? null : a > 75 ? 'wide' : a < 25 ? 'tuck' : 'good';
-  return { sample, flare, gradeFlare, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
+  // 臥推椅胸推的下放深度（手肘比肩膀高幾度）：≤10° 夠低、>20° 放不夠低
+  const gradeDepth = d => d == null ? null : d <= 10 ? 'good' : d <= 20 ? 'mid' : 'shallow';
+  return { sample, flare, gradeFlare, gradeDepth, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
 })();
 if (typeof module !== 'undefined') module.exports = Core;
