@@ -93,6 +93,7 @@ ol.tips b{color:var(--tx)}
     <button class="sec sm" id="btnPv">預覽鏡頭畫面</button>
     <label class="f">動作<select id="ex"><option value="fly">地板啞鈴飛鳥</option><option value="press">地板啞鈴臥推</option><option value="bench">臥推椅啞鈴胸推</option></select></label>
     <label class="f">鏡頭<select id="cam"><option value="user">前鏡頭（看得到畫面）</option><option value="environment">後鏡頭</option></select></label>
+    <label class="f">準備時間（按開始後的倒數）<select id="cdSec"><option value="5">5 秒</option><option value="10" selected>10 秒</option><option value="15">15 秒</option><option value="20">20 秒</option><option value="30">30 秒</option></select></label>
     <label class="f">語音提示<select id="voice"><option value="1">開</option><option value="0">關</option></select></label>
     <label class="f">模型<select id="model"><option value="lite">輕量（舊手機）</option><option value="full" selected>標準</option><option value="heavy">高精度（較慢）</option></select></label>
     <label class="f">啞鈴重量（單手，公斤）<input type="number" id="kg" inputmode="decimal" min="0" step="0.5" placeholder="選填"></label>
@@ -112,7 +113,7 @@ ol.tips b{color:var(--tx)}
   <ol class="tips">
     <li id="placeTip"></li>
     <li>雙手張開時，兩顆啞鈴和上半身都要在畫面內。</li>
-    <li>按「開始」後有 5 秒倒數。倒數完它會等你躺好不動約 1 秒，聽到「開始」才開始數；人不在畫面裡不會計次。</li>
+    <li>按「開始」後會倒數（預設 10 秒，可在上面的「準備時間」調整），讓你有時間就位。倒數完它會等你躺好不動約 1 秒，聽到「開始」才開始數；人不在畫面裡不會計次。</li>
     <li>做完直接起身就好：起身或離開畫面幾秒後會自動結束並報結果，不用趕去按按鈕。中途想休息可以躺著停，停 30 秒才會自動結束。結果頁可以回放剛剛那一組的影片。</li>
     <li>飛鳥的手肘角度是從畫面上量的，這個拍法最準；從側面或腳邊拍時角度僅供參考。臥推評的是「手肘張開角度」（上臂和身體的夾角），用模型估計的 3D 姿勢算，不受拍攝角度影響，但可能有十幾度誤差。</li>
   </ol>
@@ -124,7 +125,7 @@ ol.tips b{color:var(--tx)}
   <div class="hud" id="fb"></div>
   <div class="hud" id="warn"></div>
   <div class="hud" id="count">0</div>
-  <div class="hud" id="cd"><b>5</b><span>躺好，手臂張開放在地上</span></div>
+  <div class="hud" id="cd"><b>10</b><span>躺好，手臂張開放在地上</span></div>
   <div class="hud" id="load">載入姿勢偵測模型中…<br>第一次需要下載，請稍候</div>
   <button id="stop">結束這一組</button>
 </section>

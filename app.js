@@ -40,7 +40,7 @@ const EX = {
     name: '臥推椅啞鈴胸推', sp: [0.8, 1.5], target: '2 秒左右', count: '1、2', elbow: false, flare: true, depth: true,
     sub: '臥推椅啞鈴胸推｜即時骨架、自動數次數，語音提醒下放速度與手肘是否張太開，並記錄每一下放得夠不夠低。',
     cd: '在椅上躺好，啞鈴停在胸口上方或胸口兩側',
-    place: '手機放在頭頂的斜後方約 1.5–2 公尺，要比臥推椅高（大約胸口到肩膀的高度）往下拍。肩膀、手肘要拍得到，髖部最好也在畫面內；注意椅背和啞鈴不要擋住肩膀。',
+    place: '不要從頭頂後方拍：臥推椅的椅墊會把頭、肩膀和身體整個擋住。請把手機放在「腳那一側的斜前方」（和身體大約夾 45°）、距離 2–2.5 公尺、高度大約在腰到胸口，讓頭、肩膀、兩邊手肘、髖部都看得到。先按「預覽鏡頭畫面」確認肩膀沒有被椅子或啞鈴擋住。',
     std: { kind: 'press', bench: true, label: '標準', down: 2, up: 1, flare: 55, low: -3, color: GREEN },
     stdTxt: '從腳邊看過去的樣子。啞鈴從胸口上方用約 2 秒放下，放到手肘和肩膀差不多高（上臂大約和地面平行、胸口有被拉開的感覺）就推回去，不用刻意壓得更低；肩胛骨全程往後夾、貼住椅面；前臂保持垂直，手肘不要張到和肩膀成一直線，上臂和身體大約夾 45–60°。',
     bad: {
@@ -65,7 +65,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
 // 設定
-for (const id of ['ex', 'cam', 'voice', 'model', 'kg']) {
+for (const id of ['ex', 'cam', 'cdSec', 'voice', 'model', 'kg']) {
   const el = $(id), v = store.get('fa_' + id, null);
   if (v != null) el.value = v;
   el.addEventListener('change', () => store.set('fa_' + id, el.value));
@@ -188,7 +188,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) stopP
 function resetSet() {
   S.buf = []; S.res = null; S.said = 0; S.fbDone = 0; S.recording = false; S.lastRepT = 0;
   S.armed = false; S.steady = null; S.miss = 0; S.armT = 0; S.missSaid = false;
-  S.home = null; S.goneT = 0;
+  S.home = null; S.goneT = 0; S.prevC = null; S.jump = 0;
   S.ex = EX[$('ex').value] ? $('ex').value : 'fly'; $('cd').querySelector('span').textContent = EX[S.ex].cd; // 這一組做的動作，開始後就固定
   S.track = []; S.lastKey = null; S.setId = (S.setId || 0) + 1; clearReplay();
   $('count').textContent = '0'; $('fb').style.display = 'none'; $('warn').style.display = 'none';
@@ -212,10 +212,11 @@ async function startLive() {
 }
 
 function countdown() {
-  let n = 5; const cd = $('cd'), b = cd.querySelector('b'); cd.style.display = 'flex';
+  let n = parseInt($('cdSec').value) || 10; const cd = $('cd'), b = cd.querySelector('b'); cd.style.display = 'flex';
   const tick = () => {
     if (!S.running) return;
-    if (n > 0) { b.textContent = n; say(String(n), true); n--; setTimeout(tick, 1000); }
+    // 倒數較長時不用每秒都報：只報 5 的倍數和最後 5 秒
+    if (n > 0) { b.textContent = n; if (n <= 5 || n % 5 === 0) say(String(n), true); n--; setTimeout(tick, 1000); }
     else { cd.style.display = 'none'; S.armed = true; S.steady = null; S.armT = performance.now() / 1000; setPhase('就位後不要動', 'var(--b)'); } // 等看到人、而且不動約 1 秒才開始記錄
   };
   tick();
@@ -266,6 +267,16 @@ function loop() {
     return;
   }
   S.miss = 0;
+  // 骨架在相鄰兩格之間瞬間跳很遠：通常是模型在亂猜（人被擋住、把椅子當成人），這一格不採用
+  {
+    const c = Core.center(lm, W, H), tc = S.mode === 'upload' ? vid.currentTime : now / 1000, p = S.prevC;
+    S.prevC = { x: c.x, y: c.y, size: c.size, t: tc };
+    if (p && Math.abs(tc - p.t) < 0.3 && (Math.hypot(c.x - p.x, c.y - p.y) > 0.3 * Math.max(c.size, p.size) || c.size > 1.6 * p.size || p.size > 1.6 * c.size)) {
+      S.jump = (S.jump || 0) + 1; S.steady = null;
+      if (S.jump > 3) warn('看不清楚你的身體，請換個拍攝角度（肩膀和手肘不能被擋住）');
+      return;
+    }
+  }
   draw(ctx, lm, W, H);
   if (!S.recording) {
     warn('');
@@ -570,8 +581,13 @@ function renderSummary(a, mode) {
   if (dg === 'deep') tips.push('放得太低，手肘沉到肩膀以下很多，肩膀前側壓力大。放到手肘和肩膀差不多高（上臂大約和地面平行）就推回去。');
   if (dg === 'mid') tips.push('深度還可以，再放低一點點，讓手肘降到和肩膀差不多高，胸肌會拉得更開。');
   if (noPause) tips.push('底部幾乎沒有停。上臂碰地後停一下再推，不要借地板的反彈。');
+  // 偵測不穩定的跡象：骨架常常瞬間跳動、很多下的下放時間短到不合理、或每一下的張開角度差很多。
+  // 通常是身體被擋住、模型在亂猜，這時數字不可信，要明講
+  const dn = a.reps.map(r => r.down).filter(x => x != null), fl = a.reps.map(r => r.flare).filter(x => x != null);
+  const shaky = a.count >= 3 && ((S.jump || 0) > 10 || dn.filter(x => x < 0.15).length >= dn.length * 0.3 || (fl.length >= 3 && Math.max(...fl) - Math.min(...fl) > 60));
+  const shakyMsg = '<b style="color:var(--r)">這一組的偵測很不穩定，下面的次數和數字不可信。</b>最常見的原因是肩膀或手肘被擋住（椅子、啞鈴、身體其他部位），模型只能用猜的。請看下面回放裡的綠色骨架有沒有貼在你身上；沒有的話請換拍攝角度，參考首頁的「手機怎麼擺」。<br><br>';
   $('verdict').innerHTML = !a.count ? '沒有偵測到完整的動作。請確認全身入鏡，再試一次。'
-    : tips.length ? tips.join('<br>') : E.good;
+    : (shaky ? shakyMsg : '') + (tips.length ? tips.join('<br>') : E.good);
   // 標準 vs 你這一組：用這一組量到的平均秒數與手肘角度畫成同一種簡圖來對照
   if (a.count && m.down != null) {
     const key = repKey({ down: m.down, elbow: m.elbow, flare: m.flare });
