@@ -21,6 +21,24 @@ const Core = (() => {
     return o;
   }
 
+  // 手肘張開角度：上臂（肩→肘）與軀幹（肩→髖）的夾角（度）。
+  // 用模型估計的 3D 座標（world landmarks）算，所以不受拍攝角度影響；lm 只用來看可見度
+  function flare(wl, lm) {
+    const o = { L: null, R: null };
+    if (!wl) return o;
+    // 軀幹方向用「兩肩中點 → 兩髖中點」（單側的肩→髖會往內斜，角度會偏大）
+    const mid = (i, j, c) => (wl[i][c] + wl[j][c]) / 2;
+    const b = ['x', 'y', 'z'].map(c => mid(23, 24, c) - mid(11, 12, c));
+    for (const k in SIDES) {
+      const [s, e, h] = SIDES[k], v = i => lm[i].visibility ?? 0;
+      if (Math.min(v(s), v(e)) < 0.5 || Math.min(v(23), v(24)) < 0.3) continue;
+      const a = [wl[e].x - wl[s].x, wl[e].y - wl[s].y, wl[e].z - wl[s].z];
+      const cos = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (Math.hypot(...a) * Math.hypot(...b) || 1);
+      o[k] = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+    }
+    return o;
+  }
+
   // 人在畫面裡的大小（像素）：肩寬與兩側軀幹長度取最大
   function size(lm, W, H) {
     const d = (a, b) => Math.hypot((lm[a].x - lm[b].x) * W, (lm[a].y - lm[b].y) * H);
@@ -78,6 +96,10 @@ const Core = (() => {
           const a = [];
           for (let j = Math.floor((downIdx + i) / 2); j <= i; j++) for (const k of ['L', 'R']) if (buf[j][k].ang != null) a.push(buf[j][k].ang);
           cur.elbow = a.length ? med(a) : null;
+          // 手肘張開角度：同一段時間（上臂接近地面時）兩手的中位數
+          const fa = [];
+          for (let j = Math.floor((downIdx + i) / 2); j <= i; j++) for (const k of ['L', 'R']) if (buf[j][k].abd != null) fa.push(buf[j][k].abd);
+          cur.flare = fa.length ? med(fa) : null;
         }
         else if (s >= TOP) { st = 'top'; cur.top = null; }
       }
@@ -91,6 +113,8 @@ const Core = (() => {
   const grade = d => d == null ? null : d < 1.0 ? 'fast' : d < 1.8 ? 'mid' : 'good';
   // 飛鳥的手肘角度評級：>165° 鎖死、140–165° 微彎（理想）、<140° 彎太多
   const gradeElbow = a => a == null ? null : a > 165 ? 'lock' : a >= 140 ? 'good' : 'bent';
-  return { sample, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
+  // 臥推的手肘張開角度：>75° 太開（肩膀壓力大）、<25° 太貼身體、其餘可以（理想 45–60°）
+  const gradeFlare = a => a == null ? null : a > 75 ? 'wide' : a < 25 ? 'tuck' : 'good';
+  return { sample, flare, gradeFlare, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
 })();
 if (typeof module !== 'undefined') module.exports = Core;
