@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <meta name="theme-color" content="#0f1210">
-<title>動作教練｜地板啞鈴飛鳥</title>
+<title>動作教練</title>
 <style>
 :root{--g:#8cff28;--r:#ff4646;--b:#5abeff;--y:#ffd700;--bg:#0f1210;--card:#1a1f1b;--line:#2c342d;--tx:#eef2ec;--mut:#9aa69b}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -79,7 +79,7 @@ ol.tips b{color:var(--tx)}
 
 <section id="home" class="view on">
   <h1>動作教練</h1>
-  <p class="sub">地板啞鈴飛鳥｜即時骨架、自動數次數，語音提醒下放速度與手肘是否打直。影像只在這支手機上運算，不會上傳。</p>
+  <p class="sub" id="sub"></p>
   <button class="pri" id="btnLive">開始即時分析</button>
   <div class="row">
     <button class="sec" id="btnUpload">上傳影片分析</button>
@@ -91,6 +91,7 @@ ol.tips b{color:var(--tx)}
   <div class="card">
     <div id="pv"><video id="pvVid" playsinline muted></video><p class="tgt">調整手機位置：躺下、雙手張開時，上半身和兩顆啞鈴都要在畫面內。</p></div>
     <button class="sec sm" id="btnPv">預覽鏡頭畫面</button>
+    <label class="f">動作<select id="ex"><option value="fly">地板啞鈴飛鳥</option><option value="press">地板啞鈴臥推</option></select></label>
     <label class="f">鏡頭<select id="cam"><option value="user">前鏡頭（看得到畫面）</option><option value="environment">後鏡頭</option></select></label>
     <label class="f">語音提示<select id="voice"><option value="1">開</option><option value="0">關</option></select></label>
     <label class="f">模型<select id="model"><option value="lite">輕量（舊手機）</option><option value="full" selected>標準</option><option value="heavy">高精度（較慢）</option></select></label>
@@ -99,13 +100,13 @@ ol.tips b{color:var(--tx)}
   <h2>標準動作示範</h2>
   <div class="card">
     <canvas class="demo" id="demoCv"></canvas>
-    <div class="chips" id="demoChips"><button data-k="std">只看標準</button><button data-k="fast">對照：太快</button><button data-k="lock">對照：手肘太直</button><button data-k="bent">對照：手肘太彎</button></div>
+    <div class="chips" id="demoChips"></div>
     <p class="tgt" id="demoTxt"></p>
   </div>
   <h2>語音在說什麼</h2>
   <ol class="tips">
-    <li>「<b>第 3 下，手肘太直</b>」：有「第幾下」的是<b>評語</b>，在說你剛剛那一下實際量到的結果。</li>
-    <li>「<b>這次手肘彎一點</b>」：「這次…」開頭的是<b>提醒</b>，在手舉到最高、準備放下時講，告訴你這一下要怎麼做。上一下沒問題就不會提醒。</li>
+    <li>「<b>第 3 下，放太快</b>」：有「第幾下」的是<b>評語</b>，在說你剛剛那一下實際量到的結果。</li>
+    <li>「<b>這次慢慢放</b>」：「這次…」開頭的是<b>提醒</b>，在手舉到最高、準備放下時講，告訴你這一下要怎麼做。上一下沒問題就不會提醒。</li>
   </ol>
   <h2>手機怎麼擺</h2>
   <ol class="tips">
@@ -113,7 +114,7 @@ ol.tips b{color:var(--tx)}
     <li>雙手張開時，兩顆啞鈴和上半身都要在畫面內。</li>
     <li>按「開始」後有 5 秒倒數。倒數完它會等你躺好不動約 1 秒，聽到「開始」才開始數；人不在畫面裡不會計次。</li>
     <li>做完直接起身就好：起身或離開畫面幾秒後會自動結束並報結果，不用趕去按按鈕。中途想休息可以躺著停，停 30 秒才會自動結束。結果頁可以回放剛剛那一組的影片。</li>
-    <li>手肘角度是從畫面上量的，這個拍法最準；從側面或腳邊拍時角度僅供參考。</li>
+    <li>飛鳥的手肘角度是從畫面上量的，這個拍法最準；從側面或腳邊拍時角度僅供參考。臥推不評手肘角度。</li>
   </ol>
 </section>
 
@@ -147,7 +148,7 @@ ol.tips b{color:var(--tx)}
   </div>
   <p class="tgt" id="rpNone" style="display:none">這次沒有錄到影片（這個瀏覽器不支援錄影，或還沒開始計次就結束了）。</p>
   <h2>每一下的下放時間與手肘角度</h2>
-  <div class="card"><div id="bars"></div><p class="tgt">目標：下放 2–3 秒（綠色長條）、手肘 140–165°（微彎）。超過 165° 代表手臂打直了。</p></div>
+  <div class="card"><div id="bars"></div><p class="tgt" id="barsTgt"></p></div>
   <div class="row"><button class="pri" id="btnAgain">再做一組</button><button class="sec" id="btnHome">回首頁</button></div>
 </section>
 
