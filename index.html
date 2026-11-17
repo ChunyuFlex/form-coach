@@ -112,7 +112,7 @@ ol.tips b{color:var(--tx)}
     <li>手機放在頭頂後方約 1.5–2 公尺，架高一點（椅子或矮櫃上）往下拍，就像你上次拍的角度。</li>
     <li>雙手張開時，兩顆啞鈴和上半身都要在畫面內。</li>
     <li>按「開始」後有 5 秒倒數。倒數完它會等你躺好不動約 1 秒，聽到「開始」才開始數；人不在畫面裡不會計次。</li>
-    <li>做完停著不動 10 秒會自動結束並報結果，結果頁可以回放剛剛那一組的影片。</li>
+    <li>做完直接起身就好：起身或離開畫面幾秒後會自動結束並報結果，不用趕去按按鈕。中途想休息可以躺著停，停 30 秒才會自動結束。結果頁可以回放剛剛那一組的影片。</li>
     <li>手肘角度是從畫面上量的，這個拍法最準；從側面或腳邊拍時角度僅供參考。</li>
   </ol>
 </section>
@@ -263,7 +263,7 @@ const MODEL = (k, v) => `https://storage.googleapis.com/mediapipe-models/pose_la
 const $ = id => document.getElementById(id);
 const CONN = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
 const PH = { bot: ['底部', 'var(--b)'], up: ['上舉 ↑', 'var(--g)'], top: ['頂端', 'var(--g)'], down: ['下放 ↓ 慢慢放', 'var(--y)'] };
-const AUTO_END = 10, MAX_SET = 300;
+const AUTO_END = 30, MAX_SET = 600; // 躺著不動多久自動結束（秒）；起身或離開畫面會更快結束，見 loop()
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -393,6 +393,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) stopP
 function resetSet() {
   S.buf = []; S.res = null; S.said = 0; S.fbDone = 0; S.recording = false; S.lastRepT = 0;
   S.armed = false; S.steady = null; S.miss = 0; S.armT = 0; S.missSaid = false;
+  S.home = null; S.goneT = 0;
   S.track = []; S.lastKey = null; S.setId = (S.setId || 0) + 1; clearReplay();
   $('count').textContent = '0'; $('fb').style.display = 'none'; $('warn').style.display = 'none';
   setPhase('準備', 'var(--b)');
@@ -423,7 +424,8 @@ function countdown() {
   };
   tick();
 }
-function begin() {
+function begin(c) {
+  S.home = c ? { x: c.x, y: c.y, size: c.size } : null; S.goneT = 0; // 記住躺好時的位置，之後用來判斷是否起身
   S.armed = false; S.recording = true; S.t0 = performance.now() / 1000; S.lastRepT = S.t0;
   warn(''); setPhase(...PH.bot); say('開始', true); startRec();
 }
@@ -460,6 +462,8 @@ function loop() {
   // 沒看到人（或只是背景被誤判成人）：這一格不畫、不記錄、不計次
   if (!lm || !Core.valid(lm, W, H)) {
     S.steady = null;
+    // 計次中人不見了：超過 6 秒就自動結束（次數只算到人不見之前）
+    if (S.recording && S.mode === 'live') { if (!S.goneT) S.goneT = now / 1000; else if (now / 1000 - S.goneT > 6) return finish(S.goneT); }
     if (++S.miss > 8) warn('沒看到你，請讓上半身和雙手入鏡');
     if (S.armed && !S.missSaid && now / 1000 - S.armT > 6) { S.missSaid = true; say('沒看到你，請調整手機位置'); }
     return;
@@ -471,10 +475,19 @@ function loop() {
     if (S.armed) {
       const c = Core.center(lm, W, H), tn = now / 1000;
       if (!S.steady || Math.hypot(c.x - S.steady.x, c.y - S.steady.y) > 0.25 * c.size) S.steady = { x: c.x, y: c.y, t: tn };
-      else if (tn - S.steady.t >= 1) begin();
+      else if (tn - S.steady.t >= 1) begin(c);
     }
     return;
   }
+  // 起身或離開躺的位置（肩膀位置或人的大小和開始時差很多）：這些畫面不能拿來算，否則會把前面數好的次數弄亂
+  if (S.mode === 'live' && S.home) {
+    const c = Core.center(lm, W, H), k = c.size / S.home.size;
+    if (Math.hypot(c.x - S.home.x, c.y - S.home.y) > 0.6 * S.home.size || k < 0.6 || k > 1.6) {
+      if (!S.goneT) S.goneT = now / 1000; else if (now / 1000 - S.goneT > 2.5) return finish(S.goneT);
+      warn('你離開位置了，躺回原位可以繼續'); return;
+    }
+  }
+  S.goneT = 0;
   const t = S.mode === 'upload' ? vid.currentTime : now / 1000;
   S.buf.push({ t, ...Core.sample(lm, W, H) });
   const a = S.res = Core.analyze(S.buf);
@@ -696,8 +709,11 @@ function stopAll() {
   $('cd').style.display = 'none'; $('load').style.display = 'none';
 }
 
-function finish() {
+// cutT：人起身／離開的時間點。那之前 0.7 秒起的資料都丟掉（起身的過渡動作），再重算一次
+function finish(cutT) {
   if (!S.running) return;
+  if (typeof cutT !== 'number') cutT = S.goneT || null; // 手動按結束時人已經起身了，也一樣處理
+  if (cutT) { S.buf = S.buf.filter(f => f.t < cutT - 0.7); S.res = Core.analyze(S.buf); }
   const a = S.res || { reps: [], count: 0 }, mode = S.mode;
   if (mode === 'live') { const d = Core.avg(a.reps, 'down'); say(a.count ? `結束，共 ${a.count} 下` + (d != null ? `，平均下放 ${d.toFixed(1)} 秒` : '') : '結束', true); }
   // 回放：即時模式用剛錄的影片，上傳模式直接用原檔；骨架用剛才存下來的點
