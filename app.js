@@ -225,7 +225,7 @@ function loop() {
   if (a.count > S.said) {
     S.said = a.count; S.lastRepT = t; $('count').textContent = a.count;
     // 這句最有時效（馬上要下放），所以打斷還沒講完的上一句
-    const cue = a.count === 1 ? '慢慢放下' : { fast: '慢慢放', lock: '手肘微彎', mid: '再慢一點', bent: '手臂打開' }[S.lastKey];
+    const cue = a.count === 1 ? '慢慢放下' : { fast: '這次慢慢放', lock: '這次手肘彎一點', mid: '這次再慢一點', bent: '這次手臂打開一點' }[S.lastKey]; // 「這次…」＝提醒要怎麼做
     if (cue) say(cue, true);
   }
   // 剛放到底：報「第幾下」和這一下的結果（講的是剛剛那次下放）
@@ -235,7 +235,7 @@ function loop() {
     fb.textContent = `第 ${done} 下｜` + repText(rp);
     const bad = key === 'fast' || key === 'lock';
     fb.style.background = bad ? 'var(--r)' : key === 'good' ? 'var(--g)' : 'var(--y)'; fb.style.color = bad ? '#fff' : '#111'; fb.style.display = 'block';
-    say(`第${done}下，` + { fast: '太快', lock: '手肘打直', mid: '稍快', bent: '手肘太彎', good: '很好' }[key], true);
+    say(`第${done}下，` + { fast: '放太快', lock: '手肘太直', mid: '放得稍快', bent: '手肘太彎', good: '很好' }[key], true); // 「第N下，…」＝剛剛那一下的評語
   }
   if (S.mode === 'live' && ((a.count > 0 && a.phase === 'bot' && t - S.lastRepT > AUTO_END) || t - S.t0 > MAX_SET)) finish();
 }
@@ -246,8 +246,71 @@ function repKey(rp) {
   return g === 'fast' ? 'fast' : eg === 'lock' ? 'lock' : g === 'mid' ? 'mid' : eg === 'bent' ? 'bent' : 'good';
 }
 function repText(rp) {
-  return `下放 ${rp.down.toFixed(1)} 秒` + (rp.elbow != null ? `｜手肘 ${rp.elbow.toFixed(0)}°` : '') + ' ' + { fast: '× 太快', lock: '× 手肘打直了', mid: '△ 再慢一點', bent: '△ 手肘彎太多', good: '✓ 很好' }[repKey(rp)];
+  return `下放 ${rp.down.toFixed(1)} 秒` + (rp.elbow != null ? `｜手肘 ${rp.elbow.toFixed(0)}°` : '') + ' ' + { fast: '× 放太快', lock: '× 手肘太直，要微彎', mid: '△ 再慢一點', bent: '△ 手肘彎太多', good: '✓ 很好' }[repKey(rp)];
 }
+
+// ===== 示範動畫：從腳邊看過去的簡圖（人躺著，兩手畫弧線）=====
+// panels: [{ label, down(下放秒數), up(上舉秒數), elbow(手肘角度), color }]；多個 panel 會同時開始每一下，方便對照
+const STD = { label: '標準', down: 3, up: 1.2, elbow: 150, color: '#8cff28' };
+function demo(cv, panels) {
+  cancelAnimationFrame(cv._raf); cv._panels = panels; if (!panels) return;
+  const HOLD = 0.4, REST = 0.9, t0 = performance.now();
+  const cyc = Math.max(...panels.map(p => p.up + HOLD + p.down)) + REST;
+  const ease = u => u * u * (3 - 2 * u);
+  const frame = () => {
+    if (cv._panels !== panels) return;
+    cv._raf = requestAnimationFrame(frame);
+    if (!cv.offsetParent) return; // 不在畫面上就不畫
+    const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const t = ((performance.now() - t0) / 1000) % cyc, pw = w / panels.length;
+    panels.forEach((p, i) => {
+      // k：手臂抬起的程度，0 = 貼地、1 = 最高
+      let k, txt; const td = t - p.up - HOLD;
+      if (t < p.up) { k = ease(t / p.up); txt = '上舉'; }
+      else if (td < 0) { k = 1; txt = '頂端'; }
+      else if (td < p.down) { const u = td / p.down; k = 1 - (p.down < 1 ? u * u : ease(u)); txt = `下放 ${td.toFixed(1)} 秒`; } // 太快的看起來像掉下去
+      else { k = 0; txt = `下放共 ${p.down.toFixed(1)} 秒`; }
+      const cx = i * pw + pw / 2, fl = h - 30, L = Math.min((pw / 2 - 12) / 1.25, (fl - 30) / 1.2);
+      const sx = 0.2 * L, sy = fl - 0.13 * L, U = 0.5 * L, F = 0.5 * L, bend = (180 - p.elbow) * Math.PI / 180;
+      const pts = (kk, s) => { // s = ±1 左右手；回傳 [肩, 肘, 手]
+        const th = kk * 76 * Math.PI / 180, S = [cx + s * sx, sy];
+        const E = [S[0] + s * U * Math.cos(th), S[1] - U * Math.sin(th)];
+        return [S, E, [E[0] + s * F * Math.cos(th + bend), E[1] - F * Math.sin(th + bend)]];
+      };
+      g.font = '700 14px system-ui,sans-serif'; g.textAlign = 'center'; g.fillStyle = p.color; g.fillText(p.label, cx, 16);
+      g.strokeStyle = '#2c342d'; g.lineWidth = 2; g.setLineDash([]); g.beginPath(); g.moveTo(i * pw + 8, fl); g.lineTo((i + 1) * pw - 8, fl); g.stroke();
+      g.fillStyle = '#39443a'; g.beginPath(); g.arc(cx, sy - 0.1 * L, 0.11 * L, 0, 7); g.fill();               // 頭
+      g.fillStyle = '#2c342d'; g.beginPath(); g.ellipse(cx, sy, sx + 0.05 * L, 0.13 * L, 0, 0, 7); g.fill();    // 胸
+      for (const s of [-1, 1]) {
+        g.strokeStyle = p.color; g.globalAlpha = 0.45; g.lineWidth = 2; g.setLineDash([3, 5]); g.beginPath();   // 手的軌道
+        for (let j = 0; j <= 24; j++) { const H = pts(j / 24, s)[2]; j ? g.lineTo(H[0], H[1]) : g.moveTo(H[0], H[1]); }
+        g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+        const [S, E, H] = pts(k, s);
+        g.lineWidth = Math.max(4, L / 22); g.lineCap = g.lineJoin = 'round'; g.beginPath(); g.moveTo(S[0], S[1]); g.lineTo(E[0], E[1]); g.lineTo(H[0], H[1]); g.stroke();
+        g.fillStyle = p.color; g.beginPath(); g.arc(E[0], E[1], Math.max(4, L / 20), 0, 7); g.fill();
+        g.fillStyle = '#eef2ec'; g.beginPath(); g.arc(H[0], H[1], Math.max(6, L / 13), 0, 7); g.fill();           // 啞鈴
+      }
+      g.font = '600 12px system-ui,sans-serif'; g.fillStyle = '#9aa69b';
+      g.fillText(`${txt}｜手肘 ${Math.round(p.elbow)}°`, cx, h - 10);
+    });
+  };
+  frame();
+}
+// 首頁的示範：可切換「只看標準」或和常見錯誤對照
+const BAD = {
+  fast: [{ label: '太快', down: 0.4, up: 1.2, elbow: 150, color: '#ff4646' }, '右邊是「放太快」：啞鈴幾乎是掉下去的。標準是用 2–3 秒慢慢放，軌道一樣、速度不同。'],
+  lock: [{ label: '手肘太直', down: 3, up: 1.2, elbow: 178, color: '#ff4646' }, '右邊是「手肘太直」：手臂整支打直，啞鈴離身體最遠，手肘和肩膀壓力最大。標準是全程微彎（像抱一顆大球），角度固定不變。'],
+  bent: [{ label: '手肘太彎', down: 3, up: 1.2, elbow: 95, color: '#ffd700' }, '右邊是「手肘太彎」：啞鈴變成直上直下，像臥推，胸肌沒有被拉開。標準的軌道是一個大弧線。']
+};
+function setDemo(k) {
+  document.querySelectorAll('#demoChips button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+  demo($('demoCv'), BAD[k] ? [STD, BAD[k][0]] : [STD]);
+  $('demoTxt').textContent = BAD[k] ? BAD[k][1] : '從腳邊看過去的樣子。虛線是啞鈴的軌道：手肘保持微彎（約 150°），沿著大弧線舉起；放下時用 2–3 秒，上臂輕碰地就再舉起。';
+}
+$('demoChips').onclick = e => { const b = e.target.closest('button'); if (b) setDemo(b.dataset.k); };
+setDemo('std');
 // 骨架點壓成小陣列存起來，回放時疊在影片上
 const pack = lm => { const a = new Float32Array(99); lm.forEach((p, i) => { a[i * 3] = p.x; a[i * 3 + 1] = p.y; a[i * 3 + 2] = p.visibility ?? 0; }); return a; };
 const unpack = a => Array.from({ length: 33 }, (_, i) => ({ x: a[i * 3], y: a[i * 3 + 1], visibility: a[i * 3 + 2] }));
@@ -358,6 +421,14 @@ function renderSummary(a, mode) {
   if (g === 'mid') tips.push('下放有在控制了，再慢一點，數到 3 才碰地。');
   $('verdict').innerHTML = !a.count ? '沒有偵測到完整的動作。請確認全身入鏡，再試一次。'
     : tips.length ? tips.join('<br>') : '下放速度和手肘角度都控制得很好，可以考慮加重量或次數。';
+  // 標準 vs 你這一組：用這一組量到的平均秒數與手肘角度畫成同一種簡圖來對照
+  if (a.count && m.down != null) {
+    const key = repKey({ down: m.down, elbow: m.elbow });
+    demo($('cmpCv'), [STD, { label: '你這一組', down: m.down, up: m.up || 1.2, elbow: m.elbow ?? 150, color: key === 'good' ? '#8cff28' : key === 'fast' || key === 'lock' ? '#ff4646' : '#ffd700' }]);
+    $('cmpTxt').textContent = '右邊是依你這一組量到的平均值畫的：下放 ' + m.down.toFixed(1) + ' 秒（標準 2–3 秒）'
+      + (m.elbow != null ? '、手肘 ' + m.elbow.toFixed(0) + '°（標準約 150°）' : '、手肘角度這次量不到，先用標準角度畫') + '。兩邊同時開始每一下，可以直接看出速度和手臂形狀差在哪。這是簡圖，不是你的實際影像；實際影像看下面的回放。';
+    $('cmp').style.display = 'block';
+  } else { demo($('cmpCv'), null); $('cmp').style.display = 'none'; }
   const mx = Math.max(3, ...a.reps.map(r => r.down || 0));
   $('bars').innerHTML = a.reps.map((r, i) => {
     const c = { fast: 'var(--r)', mid: 'var(--y)', good: 'var(--g)' }[Core.grade(r.down)] || 'var(--line)';

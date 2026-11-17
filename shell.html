@@ -57,6 +57,11 @@ button.sm{padding:10px;font-size:15px;margin-bottom:4px;background:#0f1210}
 .bar span{height:18px;border-radius:5px;min-width:4px}
 .bar u{text-decoration:none;font-variant-numeric:tabular-nums}
 .tgt{color:var(--mut);font-size:13px;margin:4px 0 0}
+canvas.demo{display:block;width:100%;height:175px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 6px}
+.chips button{width:auto;padding:7px 12px;font-size:13px;font-weight:600;border-radius:999px;background:#0f1210;border:1px solid var(--line)}
+.chips button.on{background:var(--g);color:#0b1407;border-color:var(--g)}
+ol.tips b{color:var(--tx)}
 #rpStage{position:relative;background:#000;border-radius:10px;overflow:hidden}
 #rpStage video{display:block;width:100%;max-height:70vh}
 #rpCv{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
@@ -91,12 +96,22 @@ button.sm{padding:10px;font-size:15px;margin-bottom:4px;background:#0f1210}
     <label class="f">模型<select id="model"><option value="lite">輕量（舊手機）</option><option value="full" selected>標準</option><option value="heavy">高精度（較慢）</option></select></label>
     <label class="f">啞鈴重量（單手，公斤）<input type="number" id="kg" inputmode="decimal" min="0" step="0.5" placeholder="選填"></label>
   </div>
+  <h2>標準動作示範</h2>
+  <div class="card">
+    <canvas class="demo" id="demoCv"></canvas>
+    <div class="chips" id="demoChips"><button data-k="std">只看標準</button><button data-k="fast">對照：太快</button><button data-k="lock">對照：手肘太直</button><button data-k="bent">對照：手肘太彎</button></div>
+    <p class="tgt" id="demoTxt"></p>
+  </div>
+  <h2>語音在說什麼</h2>
+  <ol class="tips">
+    <li>「<b>第 3 下，手肘太直</b>」：有「第幾下」的是<b>評語</b>，在說你剛剛那一下實際量到的結果。</li>
+    <li>「<b>這次手肘彎一點</b>」：「這次…」開頭的是<b>提醒</b>，在手舉到最高、準備放下時講，告訴你這一下要怎麼做。上一下沒問題就不會提醒。</li>
+  </ol>
   <h2>手機怎麼擺</h2>
   <ol class="tips">
     <li>手機放在頭頂後方約 1.5–2 公尺，架高一點（椅子或矮櫃上）往下拍，就像你上次拍的角度。</li>
     <li>雙手張開時，兩顆啞鈴和上半身都要在畫面內。</li>
     <li>按「開始」後有 5 秒倒數。倒數完它會等你躺好不動約 1 秒，聽到「開始」才開始數；人不在畫面裡不會計次。</li>
-    <li>語音怎麼聽：手舉到最高時它會提醒下放要注意什麼（例如「慢慢放」）；放到地上後它會說「第幾下」和那次下放的結果。</li>
     <li>做完停著不動 10 秒會自動結束並報結果，結果頁可以回放剛剛那一組的影片。</li>
     <li>手肘角度是從畫面上量的，這個拍法最準；從側面或腳邊拍時角度僅供參考。</li>
   </ol>
@@ -118,6 +133,10 @@ button.sm{padding:10px;font-size:15px;margin-bottom:4px;background:#0f1210}
   <p class="sub" id="sumMeta"></p>
   <div class="stat" id="stats"></div>
   <div class="card"><div id="verdict"></div></div>
+  <div id="cmp" style="display:none">
+    <h2>標準 vs 你這一組</h2>
+    <div class="card"><canvas class="demo" id="cmpCv"></canvas><p class="tgt" id="cmpTxt"></p></div>
+  </div>
   <div id="rp" style="display:none">
     <h2>回放（含骨架）</h2>
     <div class="card">
