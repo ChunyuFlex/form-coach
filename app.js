@@ -21,14 +21,19 @@ function fail(msg) { stopAll(); show('home'); const e = $('err'); e.style.cssTex
 
 // 語音
 let zhVoice = null;
+const talk = { u: null, t: 0 };
 function pickVoice() { const vs = window.speechSynthesis?.getVoices() || []; zhVoice = vs.find(v => /zh[-_]TW/i.test(v.lang)) || vs.find(v => /^zh/i.test(v.lang)) || null; }
 if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+// urgent：打斷正在講的話（過時的話不要拖到下一個動作才講）
 function say(t, urgent) {
   if (S.mode !== 'live' || $('voice').value !== '1' || !window.speechSynthesis) return;
   try {
+    // 瀏覽器自己的 speaking／pending 狀態在 cancel 之後常常不準，所以自己記「現在這句講完了沒」
+    const busy = talk.u && Date.now() - talk.t < 4000;
     if (urgent) speechSynthesis.cancel();
-    else if (speechSynthesis.pending) return;
-    const u = new SpeechSynthesisUtterance(t); u.lang = zhVoice?.lang || 'zh-TW'; if (zhVoice) u.voice = zhVoice; u.rate = 1.15;
+    else if (busy) return;
+    const u = new SpeechSynthesisUtterance(t); u.lang = zhVoice?.lang || 'zh-TW'; if (zhVoice) u.voice = zhVoice; u.rate = 1.3;
+    talk.u = u; talk.t = Date.now(); u.onend = u.onerror = () => { if (talk.u === u) talk.u = null; };
     speechSynthesis.speak(u);
   } catch {}
 }
@@ -128,6 +133,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) stopP
 function resetSet() {
   S.buf = []; S.res = null; S.said = 0; S.fbDone = 0; S.recording = false; S.lastRepT = 0;
   S.armed = false; S.steady = null; S.miss = 0; S.armT = 0; S.missSaid = false;
+  S.track = []; S.lastKey = null; S.setId = (S.setId || 0) + 1; clearReplay();
   $('count').textContent = '0'; $('fb').style.display = 'none'; $('warn').style.display = 'none';
   setPhase('準備', 'var(--b)');
 }
@@ -159,13 +165,13 @@ function countdown() {
 }
 function begin() {
   S.armed = false; S.recording = true; S.t0 = performance.now() / 1000; S.lastRepT = S.t0;
-  warn(''); setPhase(...PH.bot); say('開始', true);
+  warn(''); setPhase(...PH.bot); say('開始', true); startRec();
 }
 
 async function startUpload(file) {
   $('err').style.display = 'none';
   S.mode = 'upload'; resetSet(); show('session'); $('stage').classList.remove('mirror');
-  stopPreview();
+  stopPreview(); S.file = file;
   S.url = URL.createObjectURL(file); vid.srcObject = null; vid.src = S.url;
   try { await loadModel(); } catch (e) { return loadFail(e); }
   try { await vid.play(); } catch (e) { return fail('這支影片無法播放：' + (e.message || e.name)); }
@@ -199,7 +205,7 @@ function loop() {
     return;
   }
   S.miss = 0;
-  draw(lm, W, H);
+  draw(ctx, lm, W, H);
   if (!S.recording) {
     warn('');
     if (S.armed) {
@@ -214,24 +220,89 @@ function loop() {
   const a = S.res = Core.analyze(S.buf);
   warn('');
   if (a.ok) setPhase(...PH[a.phase]);
-  if (a.count > S.said) { S.said = a.count; S.lastRepT = t; $('count').textContent = a.count; say(String(a.count)); }
-  // 剛放到底：給這一下的回饋
+  S.track.push({ t, a: pack(lm) });
+  // 舉到頂端（接下來要下放）：這時才提醒「下放」要注意什麼，內容依上一下的結果
+  if (a.count > S.said) {
+    S.said = a.count; S.lastRepT = t; $('count').textContent = a.count;
+    // 這句最有時效（馬上要下放），所以打斷還沒講完的上一句
+    const cue = a.count === 1 ? '慢慢放下' : { fast: '慢慢放', lock: '手肘微彎', mid: '再慢一點', bent: '手臂打開' }[S.lastKey];
+    if (cue) say(cue, true);
+  }
+  // 剛放到底：報「第幾下」和這一下的結果（講的是剛剛那次下放）
   const done = a.reps.filter(x => x.down != null).length;
   if (done > S.fbDone) {
-    S.fbDone = done; const rp = a.reps[done - 1], d = rp.down, g = Core.grade(d), eg = Core.gradeElbow(rp.elbow), fb = $('fb');
-    // 優先順序：太快 > 手肘鎖死 > 稍快 > 手肘彎太多 > 很好
-    const key = g === 'fast' ? 'fast' : eg === 'lock' ? 'lock' : g === 'mid' ? 'mid' : eg === 'bent' ? 'bent' : 'good';
-    fb.textContent = `下放 ${d.toFixed(1)} 秒` + (rp.elbow != null ? `｜手肘 ${rp.elbow.toFixed(0)}°` : '') + ' ' + { fast: '× 太快', lock: '× 手肘打直了', mid: '△ 再慢一點', bent: '△ 手肘彎太多', good: '✓ 很好' }[key];
+    S.fbDone = done; const rp = a.reps[done - 1], key = S.lastKey = repKey(rp), fb = $('fb');
+    fb.textContent = `第 ${done} 下｜` + repText(rp);
     const bad = key === 'fast' || key === 'lock';
     fb.style.background = bad ? 'var(--r)' : key === 'good' ? 'var(--g)' : 'var(--y)'; fb.style.color = bad ? '#fff' : '#111'; fb.style.display = 'block';
-    say({ fast: '太快，慢慢放', lock: '手肘微彎', mid: '再慢一點', bent: '手肘彎太多', good: '很好' }[key]);
+    say(`第${done}下，` + { fast: '太快', lock: '手肘打直', mid: '稍快', bent: '手肘太彎', good: '很好' }[key], true);
   }
   if (S.mode === 'live' && ((a.count > 0 && a.phase === 'bot' && t - S.lastRepT > AUTO_END) || t - S.t0 > MAX_SET)) finish();
 }
 
+// 一下的評語。優先順序：太快 > 手肘鎖死 > 稍快 > 手肘彎太多 > 很好
+function repKey(rp) {
+  const g = Core.grade(rp.down), eg = Core.gradeElbow(rp.elbow);
+  return g === 'fast' ? 'fast' : eg === 'lock' ? 'lock' : g === 'mid' ? 'mid' : eg === 'bent' ? 'bent' : 'good';
+}
+function repText(rp) {
+  return `下放 ${rp.down.toFixed(1)} 秒` + (rp.elbow != null ? `｜手肘 ${rp.elbow.toFixed(0)}°` : '') + ' ' + { fast: '× 太快', lock: '× 手肘打直了', mid: '△ 再慢一點', bent: '△ 手肘彎太多', good: '✓ 很好' }[repKey(rp)];
+}
+// 骨架點壓成小陣列存起來，回放時疊在影片上
+const pack = lm => { const a = new Float32Array(99); lm.forEach((p, i) => { a[i * 3] = p.x; a[i * 3 + 1] = p.y; a[i * 3 + 2] = p.visibility ?? 0; }); return a; };
+const unpack = a => Array.from({ length: 33 }, (_, i) => ({ x: a[i * 3], y: a[i * 3 + 1], visibility: a[i * 3 + 2] }));
+
+// 錄下這一組（只留在這個頁面的記憶體，不會上傳）
+function startRec() {
+  S.rec = null; S.chunks = [];
+  if (!window.MediaRecorder || !S.stream) return;
+  const mime = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+  try {
+    const r = new MediaRecorder(S.stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 1500000 }), chunks = S.chunks;
+    r.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    r.onstart = () => { S.recT0 = performance.now() / 1000; };
+    S.recT0 = performance.now() / 1000; r.start(1000); S.rec = r;
+  } catch { S.rec = null; }
+}
+
+// 回放：影片 + 骨架 + 目前是第幾下
+const RP = { url: null, t0: 0, track: [], reps: [], raf: 0 };
+function clearReplay() {
+  cancelAnimationFrame(RP.raf); const v = $('rpVid');
+  try { v.pause(); } catch {} v.onloadedmetadata = v.ontimeupdate = null;
+  if (RP.url) { v.removeAttribute('src'); v.load(); URL.revokeObjectURL(RP.url); RP.url = null; }
+  $('rp').style.display = 'none';
+}
+function setReplay(blob, t0, track, reps) {
+  clearReplay(); Object.assign(RP, { url: URL.createObjectURL(blob), t0, track, reps });
+  const v = $('rpVid'), s = $('rpSave');
+  // 瀏覽器錄的影片有時沒有長度資訊，先跳到最後再跳回來，進度條才能拖
+  v.onloadedmetadata = () => { if (v.duration === Infinity) { v.ontimeupdate = () => { v.ontimeupdate = null; v.currentTime = 0; }; v.currentTime = 1e101; } };
+  v.src = RP.url; $('rp').style.display = 'block';
+  s.href = RP.url; s.download = '動作教練-' + new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16).replace(/[-:T]/g, '') + (/mp4/.test(blob.type) ? '.mp4' : /webm/.test(blob.type) ? '.webm' : '');
+  replayLoop();
+}
+function replayLoop() {
+  RP.raf = requestAnimationFrame(replayLoop);
+  const v = $('rpVid'), c = $('rpCv'); if (!v.videoWidth) return;
+  if (c.width !== v.videoWidth || c.height !== v.videoHeight) { c.width = v.videoWidth; c.height = v.videoHeight; }
+  const g = c.getContext('2d'), t = RP.t0 + v.currentTime, tr = RP.track;
+  g.clearRect(0, 0, c.width, c.height);
+  let lo = 0, hi = tr.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (tr[m].t < t) lo = m + 1; else hi = m; }
+  const f = lo > 0 && t - tr[lo - 1].t < tr[lo].t - t ? tr[lo - 1] : tr[lo];
+  if (f && Math.abs(f.t - t) < 0.15) draw(g, unpack(f.a), c.width, c.height);
+  let lab = '';
+  RP.reps.forEach((r, i) => {
+    if (t < r.tTop - (r.up || 0)) return;
+    lab = `第 ${i + 1} 下` + (r.down != null && t >= r.tTop + (r.top || 0) + r.down ? '｜' + repText(r) : '');
+  });
+  const L = $('rpLab'); L.textContent = lab; L.style.display = lab ? 'block' : 'none';
+}
+
 function warn(t) { const w = $('warn'); w.textContent = t; w.style.display = t ? 'block' : 'none'; }
 
-function draw(lm, W, H) {
+function draw(ctx, lm, W, H) {
   const lw = Math.max(4, W / 180);
   ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.strokeStyle = '#8cff28'; ctx.fillStyle = '#8cff28';
   const ok = i => (lm[i].visibility ?? 0) > 0.5, used = new Set();
@@ -246,6 +317,7 @@ function stopAll() {
   S.stream?.getTracks().forEach(t => t.stop()); S.stream = null;
   try { vid.pause(); } catch {} vid.onended = null; vid.srcObject = null;
   if (S.url) { URL.revokeObjectURL(S.url); S.url = null; vid.removeAttribute('src'); vid.load(); }
+  try { if (S.rec && S.rec.state !== 'inactive') S.rec.stop(); } catch {} S.rec = null;
   try { S.wake?.release(); } catch {} S.wake = null;
   $('cd').style.display = 'none'; $('load').style.display = 'none';
 }
@@ -254,7 +326,17 @@ function finish() {
   if (!S.running) return;
   const a = S.res || { reps: [], count: 0 }, mode = S.mode;
   if (mode === 'live') { const d = Core.avg(a.reps, 'down'); say(a.count ? `結束，共 ${a.count} 下` + (d != null ? `，平均下放 ${d.toFixed(1)} 秒` : '') : '結束', true); }
+  // 回放：即時模式用剛錄的影片，上傳模式直接用原檔；骨架用剛才存下來的點
+  const track = S.track, reps = a.reps, id = S.setId, r = S.rec;
+  let hasVideo = false;
+  if (mode === 'live' && r && r.state !== 'inactive') {
+    const chunks = S.chunks, t0 = S.recT0; hasVideo = true;
+    r.onstop = () => { if (id === S.setId && chunks.length) setReplay(new Blob(chunks, { type: r.mimeType || chunks[0].type }), t0, track, reps); };
+    try { r.stop(); } catch {}
+  }
   stopAll(); renderSummary(a, mode); show('summary');
+  if (mode === 'upload' && S.file) { hasVideo = true; setReplay(S.file, 0, track, reps); }
+  $('rpNone').style.display = hasVideo ? 'none' : 'block';
 }
 
 const f1 = x => x == null ? '–' : x.toFixed(1);
@@ -280,7 +362,7 @@ function renderSummary(a, mode) {
   $('bars').innerHTML = a.reps.map((r, i) => {
     const c = { fast: 'var(--r)', mid: 'var(--y)', good: 'var(--g)' }[Core.grade(r.down)] || 'var(--line)';
     const e = Core.gradeElbow(r.elbow), et = r.elbow == null ? '' : `　<span class="${{ lock: 'fast', good: 'good', bent: 'mid' }[e]}">手肘 ${r.elbow.toFixed(0)}°</span>`;
-    return `<div class="bar"><i>${i + 1}</i><span style="width:${(r.down || 0) / mx * 55}%;background:${c}"></span><u>${r.down == null ? '未完成' : r.down.toFixed(1) + ' 秒'}${et}</u></div>`;
+    return `<div class="bar" data-i="${i}"><i>${i + 1}</i><span style="width:${(r.down || 0) / mx * 55}%;background:${c}"></span><u>${r.down == null ? '未完成' : r.down.toFixed(1) + ' 秒'}${et}</u></div>`;
   }).join('') || '<p class="tgt">沒有資料</p>';
   if (a.count) {
     const h = store.get('fa_hist', []);
@@ -314,7 +396,13 @@ $('modelFile').onchange = async e => {
   msg.style.cssText = 'display:block;background:#14301a;border-color:var(--g);color:#d6ffd0';
   msg.textContent = '模型檔已載入：' + f.name + '\n請再按一次「開始即時分析」或「上傳影片分析」。';
 };
-$('btnHome').onclick = $('btnHome2').onclick = () => show('home');
+$('btnHome').onclick = $('btnHome2').onclick = () => { clearReplay(); show('home'); };
+// 點某一下的長條：回放跳到那一下開始前
+$('bars').onclick = e => {
+  const b = e.target.closest('.bar'), r = b && RP.reps[b.dataset.i]; if (!r || !RP.url) return;
+  const v = $('rpVid'); v.currentTime = Math.max(0, r.tTop - (r.up || 0) - RP.t0 - 0.3);
+  v.play().catch(() => {}); $('rp').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
 $('btnHist').onclick = () => { stopPreview(); renderHistory(); show('history'); };
 let clearArmed = 0;
 $('btnClear').onclick = e => {
