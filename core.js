@@ -175,8 +175,8 @@ const Core = (() => {
   const gradeElbow = a => a == null ? null : a > 165 ? 'lock' : a >= 140 ? 'good' : 'bent';
   // 臥推的手肘張開角度：>75° 太開（肩膀壓力大）、<25° 太貼身體、其餘可以（理想 45–60°）
   const gradeFlare = a => a == null ? null : a > 75 ? 'wide' : a < 25 ? 'tuck' : 'good';
-  // 臥推椅胸推的下放深度（手肘比肩膀高幾度）：≤10° 夠低、>20° 放不夠低
-  const gradeDepth = d => d == null ? null : d <= 10 ? 'good' : d <= 20 ? 'mid' : 'shallow';
+  // 臥推椅胸推的下放深度（手肘比肩膀高幾度）：< -25° 放太低（肩膀前側壓力大）、-25～10° 剛好、>20° 放不夠低
+  const gradeDepth = d => d == null ? null : d < -25 ? 'deep' : d <= 10 ? 'good' : d <= 20 ? 'mid' : 'shallow';
   return { sample, flare, gradeFlare, gradeDepth, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
 })();
 if (typeof module !== 'undefined') module.exports = Core;

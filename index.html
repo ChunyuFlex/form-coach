@@ -337,8 +337,8 @@ const Core = (() => {
   const gradeElbow = a => a == null ? null : a > 165 ? 'lock' : a >= 140 ? 'good' : 'bent';
   // 臥推的手肘張開角度：>75° 太開（肩膀壓力大）、<25° 太貼身體、其餘可以（理想 45–60°）
   const gradeFlare = a => a == null ? null : a > 75 ? 'wide' : a < 25 ? 'tuck' : 'good';
-  // 臥推椅胸推的下放深度（手肘比肩膀高幾度）：≤10° 夠低、>20° 放不夠低
-  const gradeDepth = d => d == null ? null : d <= 10 ? 'good' : d <= 20 ? 'mid' : 'shallow';
+  // 臥推椅胸推的下放深度（手肘比肩膀高幾度）：< -25° 放太低（肩膀前側壓力大）、-25～10° 剛好、>20° 放不夠低
+  const gradeDepth = d => d == null ? null : d < -25 ? 'deep' : d <= 10 ? 'good' : d <= 20 ? 'mid' : 'shallow';
   return { sample, flare, gradeFlare, gradeDepth, valid, center, analyze, avg, grade, gradeElbow, TOP, BOT };
 })();
 if (typeof module !== 'undefined') module.exports = Core;
@@ -388,14 +388,14 @@ const EX = {
     sub: '臥推椅啞鈴胸推｜即時骨架、自動數次數，語音提醒下放速度與手肘是否張太開，並記錄每一下放得夠不夠低。',
     cd: '在椅上躺好，啞鈴停在胸口上方或胸口兩側',
     place: '手機放在頭頂的斜後方約 1.5–2 公尺，要比臥推椅高（大約胸口到肩膀的高度）往下拍。肩膀、手肘要拍得到，髖部最好也在畫面內；注意椅背和啞鈴不要擋住肩膀。',
-    std: { kind: 'press', bench: true, label: '標準', down: 2, up: 1, flare: 55, low: -10, color: GREEN },
-    stdTxt: '從腳邊看過去的樣子。啞鈴從胸口上方用約 2 秒放下，放到手肘和肩膀差不多高或略低（胸口有被拉開的感覺），再推回去；前臂保持垂直，手肘不要張到和肩膀成一直線，上臂和身體大約夾 45–60°。',
+    std: { kind: 'press', bench: true, label: '標準', down: 2, up: 1, flare: 55, low: -3, color: GREEN },
+    stdTxt: '從腳邊看過去的樣子。啞鈴從胸口上方用約 2 秒放下，放到手肘和肩膀差不多高（上臂大約和地面平行、胸口有被拉開的感覺）就推回去，不用刻意壓得更低；肩胛骨全程往後夾、貼住椅面；前臂保持垂直，手肘不要張到和肩膀成一直線，上臂和身體大約夾 45–60°。',
     bad: {
-      fast: ['太快', { kind: 'press', bench: true, label: '太快', down: 0.4, up: 1, flare: 55, low: -10, color: RED }, '右邊是「放太快」：啞鈴是掉下去的，最低點沒有控制，肩膀最容易在這時受傷。標準是用約 2 秒控制著放下。'],
-      wide: ['手肘太開', { kind: 'press', bench: true, label: '手肘太開', down: 2, up: 1, flare: 90, low: -10, color: RED }, '右邊是「手肘太開」：上臂和身體接近 90°，在臥推椅上手肘又會沉到肩膀以下，肩膀前側壓力很大。標準是把手肘往身體收一點，夾 45–60°。從腳邊看差別不大，從頭頂往下看會很明顯。'],
+      fast: ['太快', { kind: 'press', bench: true, label: '太快', down: 0.4, up: 1, flare: 55, low: -3, color: RED }, '右邊是「放太快」：啞鈴是掉下去的，最低點沒有控制，肩膀最容易在這時受傷。標準是用約 2 秒控制著放下。'],
+      wide: ['手肘太開', { kind: 'press', bench: true, label: '手肘太開', down: 2, up: 1, flare: 90, low: -3, color: RED }, '右邊是「手肘太開」：上臂和身體接近 90°，在臥推椅上手肘又會沉到肩膀以下，肩膀前側壓力很大。標準是把手肘往身體收一點，夾 45–60°。從腳邊看差別不大，從頭頂往下看會很明顯。'],
       shallow: ['放不夠低', { kind: 'press', bench: true, label: '放不夠低', down: 1.2, up: 0.8, flare: 55, low: 35, color: YEL }, '右邊是「放不夠低」：只做上半段，胸肌沒有被拉開，等於白白浪費了臥推椅比地板多出來的行程。標準是放到手肘和肩膀差不多高或略低。']
     },
-    barsTgt: '目標：下放 2 秒左右（綠色長條）、手肘張開 45–60°（超過 75° 算太開）、最低點手肘降到和肩膀差不多高。張開角度和深度都是用模型估計的 3D 姿勢算的，可能有十幾度誤差，僅供參考。',
+    barsTgt: '目標：下放 2 秒左右（綠色長條）、手肘張開 45–60°（超過 75° 算太開）、最低點手肘降到和肩膀差不多高（比肩膀低超過 25° 算放太低）。張開角度和深度都是用模型估計的 3D 姿勢算的，可能有十幾度誤差，僅供參考。',
     good: '下放速度、手肘張開角度和下放深度都控制得很好，可以考慮加重量或次數。'
   }
 };
@@ -892,7 +892,7 @@ function renderSummary(a, mode) {
   const kg = parseFloat($('kg').value) || null;
   const m = { down: Core.avg(a.reps, 'down'), bottom: Core.avg(a.reps, 'bottom'), up: Core.avg(a.reps, 'up'), elbow: Core.avg(a.reps, 'elbow'), flare: Core.avg(a.reps, 'flare'), depth: Core.avg(a.reps, 'depth') };
   const E = cur(), g = grade(m.down), eg = gradeElbow(m.elbow), fg = gradeFlare(m.flare), fc = { wide: 'fast', good: 'good', tuck: 'mid' }[fg] || '', noPause = !!E.pause && m.bottom != null && m.bottom < 0.3;
-  const dg = E.depth ? Core.gradeDepth(m.depth) : null, dc = { good: 'good', mid: 'mid', shallow: 'mid' }[dg] || '';
+  const dg = E.depth ? Core.gradeDepth(m.depth) : null, dc = { good: 'good', mid: 'mid', shallow: 'mid', deep: 'fast' }[dg] || '';
   const depthTxt = d => d == null ? '–' : Math.abs(d) < 3 ? '和肩膀同高' : d < 0 ? `比肩膀低 ${(-d).toFixed(0)}°` : `比肩膀高 ${d.toFixed(0)}°`;
   $('barsTgt').textContent = E.barsTgt;
   $('sumMeta').textContent = new Date().toLocaleString('zh-TW', { hour12: false }) + '｜' + E.name + (kg ? `｜${kg} 公斤` : '') + (mode === 'upload' ? '｜上傳影片' : '');
@@ -901,7 +901,7 @@ function renderSummary(a, mode) {
     `<div><small>次數</small><b>${a.count}</b><em>&nbsp;</em></div>` +
     `<div><small>平均下放</small><b class="${g || ''}">${f1(m.down)} 秒</b><em class="${g || ''}">${{ fast: '太快，目標 ' + E.target, mid: '再慢一點，目標 ' + E.target, good: '很好' }[g] || ''}</em></div>` +
     (!E.elbow ? `<div><small>手肘張開角度（估計）</small><b class="${fc}">${m.flare == null ? '–' : m.flare.toFixed(0) + '°'}</b><em class="${fc}">${{ wide: '太開，往身體收一點', good: '可以，理想 45–60°', tuck: '太貼身體，打開一點' }[fg] || '這次量不到'}</em></div>` +
-      (E.depth ? `<div><small>最低點的手肘（估計）</small><b class="${dc}" style="font-size:20px">${depthTxt(m.depth)}</b><em class="${dc}">${{ good: '夠低，很好', mid: '可以再低一點', shallow: '放不夠低' }[dg] || '這次量不到'}</em></div>`
+      (E.depth ? `<div><small>最低點的手肘（估計）</small><b class="${dc}" style="font-size:20px">${depthTxt(m.depth)}</b><em class="${dc}">${{ good: '深度剛好', mid: '可以再低一點', shallow: '放不夠低', deep: '放太低，肩膀壓力大' }[dg] || '這次量不到'}</em></div>`
         : `<div><small>底部停留</small><b class="${noPause ? 'mid' : m.bottom != null ? 'good' : ''}">${f1(m.bottom)} 秒</b><em class="${noPause ? 'mid' : 'good'}">${m.bottom == null ? '&nbsp;' : noPause ? '幾乎沒停，別用彈的' : '有停住，很好'}</em></div>`) : '') +
     (!E.elbow ? '' : `<div><small>底部手肘角度</small><b class="${ec}">${m.elbow == null ? '–' : m.elbow.toFixed(0) + '°'}</b><em class="${ec}">${{ lock: '打直了，要微彎', good: '微彎，很好', bent: '彎太多，像臥推' }[eg] || '看不到手腕，無法判斷'}</em></div>` +
     `<div><small>平均上舉</small><b>${f1(m.up)} 秒</b><em>底部停留 ${f1(m.bottom)} 秒</em></div>`);
@@ -913,6 +913,7 @@ function renderSummary(a, mode) {
   if (g === 'fast') tips.push(`下放太快，啞鈴幾乎是掉下去的。放下時心裡數「${E.count}」。`);
   if (g === 'mid') tips.push(`下放有在控制了，再慢一點，目標 ${E.target}。`);
   if (dg === 'shallow') tips.push('放得不夠低，只做了上半段。把啞鈴放到手肘和肩膀差不多高（胸口有被拉開的感覺）再推；做不到的話先減重量。');
+  if (dg === 'deep') tips.push('放得太低，手肘沉到肩膀以下很多，肩膀前側壓力大。放到手肘和肩膀差不多高（上臂大約和地面平行）就推回去。');
   if (dg === 'mid') tips.push('深度還可以，再放低一點點，讓手肘降到和肩膀差不多高，胸肌會拉得更開。');
   if (noPause) tips.push('底部幾乎沒有停。上臂碰地後停一下再推，不要借地板的反彈。');
   $('verdict').innerHTML = !a.count ? '沒有偵測到完整的動作。請確認全身入鏡，再試一次。'
