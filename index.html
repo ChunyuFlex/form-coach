@@ -661,7 +661,12 @@ function drawTrail(g, t, hiIdx, cur, W, H) {
     const cand = sg => ({ x: E.x + fl * Math.cos(a1 + sg * 150 * Math.PI / 180), y: E.y + fl * Math.sin(a1 + sg * 150 * Math.PI / 180) });
     // 彎的方向：手臂幾乎打直時看不出方向，假設往身體中線彎（兩手舉起時會往中間靠）；否則沿用目前彎的方向
     let T;
-    if (ang > 165) { const A = cand(1), B = cand(-1); T = Math.hypot(A.x - O.x, A.y - O.y) < Math.hypot(B.x - O.x, B.y - O.y) ? A : B; }
+    if (ang > 165) {
+      // 前臂應該往「舉起的方向」偏：用這一下手腕在頂端時的位置當方向；沒有就假設往身體中線
+      let ref = O;
+      if (ri >= 0) { const tt = RP.reps[ri].tTop; let best = 0.3; for (const fr of tr) { const d = Math.abs(fr.t - tt); if (d < best && fr.a[wi * 3 + 2] >= 0.5) { best = d; ref = { x: fr.a[wi * 3] * W, y: fr.a[wi * 3 + 1] * H }; } if (fr.t > tt + 0.3) break; } }
+      const A = cand(1), B = cand(-1); T = Math.hypot(A.x - ref.x, A.y - ref.y) < Math.hypot(B.x - ref.x, B.y - ref.y) ? A : B;
+    }
     else T = cand(cross >= 0 ? 1 : -1);
     g.strokeStyle = '#8cff28'; g.lineWidth = lw * 0.6; g.setLineDash([lw * 1.2, lw * 1.2]);
     g.beginPath(); g.moveTo(E.x, E.y); g.lineTo(T.x, T.y); g.stroke(); g.setLineDash([]);
